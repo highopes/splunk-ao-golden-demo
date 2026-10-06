@@ -1,0 +1,28 @@
+# Tested macOS Python 3.12 dependency set; refresh deliberately.
+-c requirements.lock.txt
+streamlit
+galileo
+agent-control-sdk[galileo]>=8.0.0
+agent-control-evaluators>=8.0.0
+agent-control-evaluator-galileo>=8.0.0
+python-dotenv
+langchain
+langchain-core
+langchain-ollama
+langchain-openai
+langchain-aws
+boto3
+openai
+langgraph
+langchain-postgres
+psycopg[binary]
+langchain-text-splitters
+langchain-community
+langchain-classic
+pyyaml
+toml
+# Explicit runtime dependencies used by the CSV domains and safety checks.
+pandas
+requests
+sqlalchemy
+sqlglot

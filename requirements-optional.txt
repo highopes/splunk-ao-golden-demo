@@ -1,0 +1,2 @@
+# Only for custom domains using non-CSV/PDF ingestion; not needed by the four demo domains.
+unstructured[pdf]

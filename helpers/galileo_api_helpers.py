@@ -1,0 +1,198 @@
+"""
+Galileo API Helper Functions
+
+These helpers load only the API key and console URL from secrets.
+Domain-specific environment setup (like project names) is handled by the main app.
+"""
+import requests
+import logging
+import os
+import toml
+from pathlib import Path
+
+
+def _load_secrets_if_needed():
+    """
+    Load secrets from .streamlit/secrets.toml if environment variables are not set.
+    Only loads API key and console URL (not domain-specific settings).
+    """
+    # Check if already loaded
+    if os.environ.get("GALILEO_API_KEY") and os.environ.get("GALILEO_CONSOLE_URL"):
+        return
+    
+    # Find secrets file
+    secrets_path = Path(__file__).parent.parent / ".streamlit" / "secrets.toml"
+    
+    if not secrets_path.exists():
+        return
+    
+    try:
+        secrets = toml.load(secrets_path)
+        
+        # Set only the non-domain-specific environment variables
+        if "galileo_api_key" in secrets and not os.environ.get("GALILEO_API_KEY"):
+            os.environ["GALILEO_API_KEY"] = secrets["galileo_api_key"]
+        
+        if "galileo_console_url" in secrets and not os.environ.get("GALILEO_CONSOLE_URL"):
+            os.environ["GALILEO_CONSOLE_URL"] = secrets["galileo_console_url"]
+            
+    except Exception as e:
+        # TOML parse errors can quote a line containing a credential.
+        logging.warning("Could not load secrets (%s); details suppressed", type(e).__name__)
+
+
+def get_galileo_app_url() -> str:
+    """
+    Get the Galileo web console URL from environment variables.
+    
+    Returns:
+        str: The Galileo web console URL without trailing slash
+        
+    Raises:
+        ValueError: If GALILEO_CONSOLE_URL is not set
+    """
+    _load_secrets_if_needed()
+    
+    galileo_url = os.environ.get("GALILEO_CONSOLE_URL")
+    if not galileo_url:
+        raise ValueError("GALILEO_CONSOLE_URL environment variable is not set")
+    
+    # Remove trailing slash if present
+    return galileo_url.rstrip('/')
+
+
+def get_galileo_api_url() -> str:
+    """
+    Get the Galileo API URL from environment variables.
+    
+    Returns:
+        str: The Galileo API URL
+        
+    Raises:
+        ValueError: If GALILEO_CONSOLE_URL is not set
+    """
+    from setup_env import _derive_galileo_api_url
+    return _derive_galileo_api_url(get_galileo_app_url(), os.environ.get("GALILEO_API_URL", ""))
+
+
+def get_galileo_api_key() -> str:
+    """
+    Get the Galileo API key from environment variables.
+    
+    Returns:
+        str: The Galileo API key
+        
+    Raises:
+        ValueError: If GALILEO_API_KEY is not set
+    """
+    _load_secrets_if_needed()
+    
+    api_key = os.environ.get("GALILEO_API_KEY")
+    if not api_key:
+        raise ValueError("GALILEO_API_KEY environment variable is not set")
+    return api_key
+
+
+def get_galileo_project_id(project_name: str, starting_token: int = 0, limit: int = 100) -> str:
+    """
+    Fetches the Galileo project ID for a given project name.
+
+    Args:
+        project_name (str): The name of the project to search for.
+        starting_token (int): The starting token for pagination.
+        limit (int): The number of projects to fetch.
+
+    Returns:
+        str: The project ID if found, else None.
+        
+    Raises:
+        ValueError: If required environment variables are not set
+        requests.RequestException: If API request fails
+    """
+    api_key = get_galileo_api_key()
+    galileo_url = get_galileo_app_url()
+    
+    url = f"{galileo_url}/api/galileo/public/v2/projects/paginated?starting_token={starting_token}&limit={limit}"
+    headers = {
+        "accept": "*/*",
+        "galileo-api-key": api_key,
+        "content-type": "application/json",
+        "origin": galileo_url,
+        "referer": f"{galileo_url}/",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+    }
+    data = {
+        "sort": {
+            "name": "updated_at",
+            "ascending": False
+        },
+        "filters": []
+    }
+    response = requests.post(url, headers=headers, json=data, timeout=20)
+    response.raise_for_status()
+    result = response.json()
+    for project in result.get("projects", []):
+        if project.get("name") == project_name:
+            return project.get("id")
+    return None
+
+
+def create_galileo_logger(project_name: str, log_stream: str):
+    """
+    Create a GalileoLogger for an existing project/log stream.
+
+    Resolves project and log stream IDs first when possible so the SDK does not
+    attempt to create a project that already exists but is not returned by lookup
+    (e.g. a project in the org you do not have collaborator access to).
+    """
+    from galileo import GalileoLogger
+
+    project_id = get_galileo_project_id(project_name)
+    if project_id:
+        log_stream_id = get_galileo_log_stream_id(project_id, log_stream)
+        if log_stream_id:
+            return GalileoLogger(project_id=project_id, log_stream_id=log_stream_id)
+        return GalileoLogger(project_id=project_id, log_stream=log_stream)
+    return GalileoLogger(project=project_name, log_stream=log_stream)
+
+
+def get_galileo_log_stream_id(project_id: str, log_stream_name: str) -> str:
+    """
+    Fetches the Galileo log stream ID for a given project ID and log stream name.
+
+    Args:
+        project_id (str): The ID of the project.
+        log_stream_name (str): The name of the log stream to search for.
+
+    Returns:
+        str: The log stream ID if found, else None.
+        
+    Raises:
+        ValueError: If required environment variables are not set
+        requests.RequestException: If API request fails
+    """
+    api_key = get_galileo_api_key()
+    galileo_url = get_galileo_app_url()
+    
+    url = f"{galileo_url}/api/galileo/v2/projects/{project_id}/log_streams"
+    headers = {
+        "accept": "*/*",
+        "galileo-api-key": api_key,
+        "content-type": "application/json",
+        "origin": galileo_url,
+        "referer": f"{galileo_url}/",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+    }
+    
+    response = requests.get(url, headers=headers, timeout=20)
+    response.raise_for_status()
+    log_streams = response.json()  # This is now a list of log streams
+    
+    for stream in log_streams:  # Iterate directly over the list
+        if stream.get("name") == log_stream_name:
+            return stream.get("id")
+    return None
