@@ -8,7 +8,7 @@
 
 ## 1. What This Demo Is
 
-这是一套由行业配置驱动的 **Single Agent + Tools + RAG** 应用，不是复杂 Multi-Agent 系统。普通问答背后既可能检索知识，也可能生成 SQL 查询业务数据。SE 的现场操作集中在应用与 Splunk AO Console；终端用于安装和排障。
+这是一套由行业配置驱动的 **Single Agent + Tools + RAG** 应用，不是复杂 Multi-Agent 系统。多智能体演示应用请参考[这里](https://github.com/highopes/galileo-demo)和以及它在[Kubernetes/ACK的部署](https://github.com/highopes/alicloud-ack-byocni)。普通问答背后既可能检索知识，也可能生成 SQL 查询业务数据。SE 的现场操作集中在应用与 Splunk AO Console；终端用于安装和排障。
 
 基线来自 [rungalileo/galileo-golden-demo](https://github.com/rungalileo/galileo-golden-demo)，当前同步 commit 为 `2f05a6f5448fd103e06982e5b6e832c59650c0a0`。详见 [上游来源与修改边界](documentation/UPSTREAM.md)。没有推送远程仓库或改写提交历史。
 
@@ -33,12 +33,34 @@ flowchart TD
     P --> A
     V --> R
     R --> A
+
     A -. LangChain / LangGraph events .-> C[GalileoCallback]
     T -. 少量业务摘要 .-> G[GalileoLogger]
     C --> G
     G --> AO[Splunk AO · splunkse]
+
     AC[Agent Control · PRE / POST] -. 运行时策略 .-> L
     AC -. 执行前 SQL 检查 .-> T
+
+    %% Legend
+    subgraph LEGEND[Legend]
+        direction LR
+        LEG_APP[User Business Application]
+        LEG_GAL[Splunk AO / Galileo]
+    end
+
+    %% Node styles
+    classDef app fill:#E8F3FF,stroke:#1677C8,stroke-width:2px,color:#0B3558;
+    classDef galileo fill:#FFF0E6,stroke:#E66A1F,stroke-width:2px,color:#6B2C05;
+
+    class B,S,D,H,F,A,L,T,R,Q,P,V,O,LEG_APP app;
+    class C,G,AO,AC,LEG_GAL galileo;
+
+    %% Application data/control flow
+    linkStyle 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14 stroke:#1677C8,stroke-width:2px;
+
+    %% Galileo observability / control flow
+    linkStyle 15,16,17,18,19,20 stroke:#E66A1F,stroke-width:2px;
 ```
 
 | 组件 | 职责 | SE 需要理解的关系 |
