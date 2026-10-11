@@ -22,7 +22,7 @@ macOS 27.0.1 / Apple Silicon；Python 3.12.14；PostgreSQL 17.11；pgvector 0.8.
 
 ```bash
 source .venv/bin/activate
-python -m pip check
+uv pip check --python .venv/bin/python
 DEMO_TEST_POSTGRES=1 python -m unittest discover -s tests -v
 scripts/check-demo.sh --live
 ```

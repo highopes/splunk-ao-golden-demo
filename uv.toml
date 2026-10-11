@@ -1,0 +1,6 @@
+# Keep the existing Homebrew Python; migration must not download a new interpreter.
+python-downloads = "never"
+
+[pip]
+# This project and the default local uv cache are on the same filesystem.
+link-mode = "hardlink"

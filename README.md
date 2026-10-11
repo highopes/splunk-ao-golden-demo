@@ -163,16 +163,19 @@ Ollama 与 AWS Bedrock 代码保留，但不作为本版本标准演示路径；
 
 ```bash
 cd /path/to/splunk-ao-golden-demo
-brew install python@3.12 postgresql@17 pgvector
-python3.12 -m venv .venv
+brew install uv python@3.12 postgresql@17 pgvector
+bash scripts/setup-uv.sh
 source .venv/bin/activate
-python -m pip install -r requirements.txt
-python -m pip check
+uv pip check --python .venv/bin/python
 cp -n .streamlit/secrets.toml.example .streamlit/secrets.toml
 chmod 600 .streamlit/secrets.toml
 ```
 
-若 `python3.12` 不在 PATH，Apple Silicon 使用 `/opt/homebrew/opt/python@3.12/bin/python3.12`，Intel 使用 `/usr/local/opt/python@3.12/bin/python3.12`。本机已创建 `.venv` 和忽略的实际 secrets 文件，无需覆盖它们。
+本机环境使用 uv 管理，仍保留独立 `.venv`，Python 为 3.12.14。`scripts/setup-uv.sh` 从 `requirements.uv-snapshot.txt` 同步本次验证的完整 186 包快照，包含现有可选包，不升级依赖；同步会移除快照之外的包。快照针对 macOS arm64，不是跨平台锁文件。其他平台或 Python 版本需要独立验证，不能直接照搬本机快照。
+
+原有 `requirements.txt` 与 `requirements.lock.txt` 保留；需要按原项目依赖集合安装时，可以在自己的独立环境运行 `uv pip install --python .venv/bin/python -r requirements.txt`，传统 pip 方式也仍可用。该集合可能小于完整本机快照，不能据此声称完全还原现有环境。若 `python3.12` 不在 PATH，Apple Silicon 使用 `/opt/homebrew/opt/python@3.12/bin/python3.12`，Intel 使用 `/usr/local/opt/python@3.12/bin/python3.12`。本机已创建 `.venv` 和忽略的实际 secrets 文件，无需覆盖它们。
+
+空间复用由 OneDrive 外的默认 `~/.cache/uv` 实现，项目 `uv.toml` 选择硬链接；不要直接编辑 `site-packages` 中共享的包文件。安装/更换版本请使用 uv；需要文件写入隔离时可在并行环境以 `--link-mode clone` 重装并验证；仅改设置不会转换现有硬链接。审计与迁移记录见父目录的 `uv-readme.md`、`python-env-audit.md` 和 `python-env-migration-report.md`。
 
 ### Secrets
 

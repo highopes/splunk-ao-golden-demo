@@ -135,3 +135,7 @@ chroma_db/*
 .pytest_cache/
 *.dump
 *.sql.gz
+
+# Parallel uv migration experiments (never commit environments)
+.venv.uv-test/
+.venv.pre-uv-*/
