@@ -157,7 +157,7 @@ Ollama 与 AWS Bedrock 代码保留，但不作为本版本标准演示路径；
 
 准备 Homebrew、Git、可访问 OpenAI 的网络、可登录 `splunkse` 的账户与 API Key。至少具备创建/访问 Project、Log Stream、Dataset、Experiment、配置 Control 的权限；缺少写权限时请让管理员预建项目并授权。
 
-从自己的仓库 clone，或在已提供的 `splunk-ao-golden-demo` 根目录执行以下步骤。上游仅作同步来源，不要把本地工作目录替换成上游 clone。
+本仓库来自上游代码导入到本地目录`splunk-ao-golden-demo`，详细请见[这里](documentation/UPSTREAM.md)。
 
 ### Clone / Setup
 
