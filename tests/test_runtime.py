@@ -53,7 +53,7 @@ class RuntimeTests(unittest.TestCase):
 
     def test_domain_contracts_and_datasets(self):
         dm=DomainManager()
-        self.assertEqual(dm.list_domains(), ['bank','healthcare','insurance','restaurant'])
+        self.assertEqual(dm.list_domains(), ['bank','cisco_se','healthcare','insurance','restaurant'])
         for name in dm.list_domains():
             cfg=dm.load_domain_config(name)
             schema=json.loads(Path(cfg.tools_dir,'schema.json').read_text())

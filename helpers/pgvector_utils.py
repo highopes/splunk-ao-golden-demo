@@ -11,7 +11,9 @@ from sqlalchemy.engine import URL
 
 from helpers.llm_utils import (
     embedding_backend_available,
+    embedding_model_for_provider,
     get_embedding_dimensions,
+    get_embeddings,
     get_index_embeddings,
     resolve_embedding_provider,
 )
@@ -170,6 +172,62 @@ def format_embedding_dimension_error(
     )
 
 
+def strict_index_provider(vectorstore_config: Optional[dict]) -> Optional[str]:
+    """Return the pinned provider when ``vectorstore.strict_index`` is enabled."""
+    config = vectorstore_config or {}
+    if not config.get("strict_index"):
+        return None
+    provider = str(config.get("provider") or "").strip().lower()
+    if provider not in _PROVIDERS:
+        raise ValueError(
+            "vectorstore.strict_index requires vectorstore.provider to be one of: "
+            + ", ".join(_PROVIDERS)
+        )
+    return provider
+
+
+def verify_strict_index(domain_name: str, vectorstore_config: Optional[dict]) -> dict:
+    """Validate the pinned index without falling back to another provider.
+
+    Raises when the backend is unavailable, the collection is missing, or the
+    embedding provider/model/dimensions recorded at build time differ from the
+    domain configuration.
+    """
+    config = vectorstore_config or {}
+    provider = strict_index_provider(config)
+    if provider is None:
+        raise ValueError(f"vectorstore.strict_index is not enabled for '{domain_name}'")
+    collection_name = get_collection_name(domain_name, provider)
+    if not embedding_backend_available(provider):
+        raise RuntimeError(
+            f"Strict index {collection_name}: the {_cli_name(provider)} embedding backend "
+            "is not available; refusing to fall back to another index."
+        )
+    if not collection_exists(domain_name, provider):
+        raise ValueError(
+            f"Strict index {collection_name} does not exist. Build it with:\n"
+            f"  python helpers/setup_vectordb.py {domain_name}"
+        )
+    expected = {
+        "embedding_provider": provider,
+        "embedding_model": embedding_model_for_provider(config, provider),
+    }
+    if provider == "hosted":
+        expected["embedding_dimensions"] = get_embedding_dimensions()
+    recorded = get_collection_metadata(domain_name, provider) or {}
+    mismatches = [
+        f"{key}: index={recorded.get(key)!r} config={value!r}"
+        for key, value in expected.items()
+        if str(recorded.get(key)) != str(value)
+    ]
+    if mismatches:
+        raise ValueError(
+            f"Strict index {collection_name} does not match the domain configuration "
+            f"({'; '.join(mismatches)}). Rebuild with: python helpers/setup_vectordb.py {domain_name}"
+        )
+    return {"collection_name": collection_name, **expected}
+
+
 def get_pgvector_store(
     domain_name: str,
     embedding_model: str = "",
@@ -183,8 +241,20 @@ def get_pgvector_store(
     (chat toggle / override), falling back to the other prebuilt index if
     needed, then opens it with embeddings from that same provider so the
     query vectors always match the stored ones. Raises if no index exists.
+
+    Domains with ``vectorstore.strict_index: true`` always use the pinned
+    ``vectorstore.provider`` index and never fall back.
     """
     config = vectorstore_config or {}
+    pinned = strict_index_provider(config)
+    if pinned:
+        if provider and provider != pinned:
+            raise ValueError(
+                f"Strict index for '{domain_name}' is pinned to '{pinned}', not '{provider}'"
+            )
+        info = verify_strict_index(domain_name, config)
+        embeddings = get_embeddings(info["embedding_model"], provider=pinned)
+        return create_pgvector_store(embeddings, domain_name, pinned)
     chosen_provider = provider or select_embedding_provider_for_domain(domain_name)
     embeddings = get_index_embeddings(config, provider=chosen_provider)
     return create_pgvector_store(embeddings, domain_name, chosen_provider)

@@ -1,0 +1,55 @@
+# Official public sources behind docs/qa.csv. This manifest is for human review
+# and maintenance; it is NOT vectorized (setup_vectordb.py only embeds qa.csv).
+# Facts are short paraphrases of published specifications, not copied documents.
+# To refresh: re-check each source, update qa.csv values/sections/dates, bump
+# dataset_version in ../dataset_sources.yaml if any Ground Truth changes, then
+# rebuild with: python helpers/setup_vectordb.py cisco_se
+manifest_version: 1
+verified_at: "2026-10-21"
+sources:
+  - id: cisco-n9332d-h2r-ds
+    vendor: Cisco
+    title: "Cisco N9332D-H2R Switch Data Sheet"
+    url: "https://www.cisco.com/c/en/us/products/collateral/switches/nexus-9000-series-switches/nexus-9332d-h2r-switch-ds.html"
+    source_updated_at: "2026-07-15"
+    skus: ["N9332D-H2R (N9K-C9332D-H2R)"]
+    sections_used:
+      - "Product overview"
+      - "Table 2. Cisco N9332D-H2R Switch specifications"
+      - "Table 4. Performance and scalability specifications"
+      - "Table 6. Ordering information"
+  - id: cisco-n9364e-sg2-ds
+    vendor: Cisco
+    title: "Cisco N9364E-SG2 Switches Data Sheet"
+    url: "https://www.cisco.com/c/en/us/products/collateral/switches/nexus-9000-series-switches/nexus-9364e-sg2-switch-ds.html"
+    source_updated_at: "2026-07-31"
+    skus: ["N9364E-SG2-Q", "N9364E-SG2-O"]
+    sections_used:
+      - "Product overview"
+      - "Table 1. Features and benefits"
+      - "Table 2. Cisco N9364E-SG2 Switches Specifications"
+      - "Table 5. Ordering information"
+  - id: h3c-s9827-product-page
+    vendor: H3C
+    title: "H3C S9827 Series Data Center Switches"
+    url: "https://www.h3c.com/en/Products_and_Solutions/InterConnect/Switches/Products/Data_Center/Aggregation/S9800/H3C_S9827/"
+    source_updated_at: ""  # no update date is shown on the page
+    skus: ["S9827-64E", "S9827-64EP", "S9827-128DH"]
+    sections_used:
+      - "S9827 series model overview (3 models)"
+      - "Specification > Hardware specifications"
+    notes: >-
+      Switching capacity, forwarding performance, buffer, latency, CPU and
+      Flash/SDRAM are published as one merged cell across the three model
+      columns, so qa.csv records them at series level. The page lists typical
+      power as 2 AC:724W / 4 AC:743W / 4 AC:850W (64E / 64EP / 128DH); qa.csv
+      uses the 5W102 hardware specification values, which state the measurement
+      condition (729 W / 743 W / 850 W).
+  - id: h3c-s9827-s9857-hw-5w102
+    vendor: H3C
+    title: "H3C S9827 & S9857 Switch Series Hardware Information and Specifications-5W102"
+    url: "https://www.h3c.com/en/Support/Resource_Center/EN/Home/Public/00-Public/Technical_Documents/Product_Literature/Hardware_Information___Specifications/H3C_S-19215/202508/2614982_294551_0.htm"
+    source_updated_at: ""  # document version 5W102; no explicit date on the page
+    skus: ["LS-9827-128DH", "LS-9827-64E", "LS-9827-64EP"]
+    sections_used:
+      - "1 Product models and technical specifications > Technical specifications"

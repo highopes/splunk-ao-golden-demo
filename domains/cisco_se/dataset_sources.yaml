@@ -1,0 +1,99 @@
+# Question-to-evidence map for domains/cisco_se/dataset.csv (human review only;
+# the Experiment API receives just the input/output columns).
+# scenario_key = first 16 hex chars of sha256(trimmed input);
+# input_sha256 = full sha256(trimmed input);
+# dataset_hash = sha256 of the sorted [input, output] pairs as compact JSON
+# (experiments.experiment_helpers.dataset_content_hash). tests/test_cisco_se_domain.py
+# recomputes all three, so edit dataset.csv and this file together.
+# v2 (2026-10-21): Q09 reworded so the question asks for every point its
+# ground truth checks (rack height and the no-overall-equivalence caveat).
+# v1 asked only for port count and interface type, so both models were
+# penalized for omitting points the question never requested. Facts unchanged.
+dataset_version: "cisco-se-2026-10-21.v2"
+verified_at: "2026-10-21"
+dataset_hash: "a59188755613c856fb17ae291e6bf8312568a75f8d0f8a5c15ec04b9d82115d0"
+questions:
+  - id: Q01
+    scenario_key: "982889cdff33296a"
+    input_sha256: "982889cdff33296ad7b8abe161eccceccaff9c97d1f7b56670fcd8a39a35a92e"
+    fact_ids: [CSE-C-H2R-01, CSE-C-H2R-02, CSE-C-H2R-03]
+    sources:
+      - url: "https://www.cisco.com/c/en/us/products/collateral/switches/nexus-9000-series-switches/nexus-9332d-h2r-switch-ds.html"
+        section: "Table 2. Cisco N9332D-H2R Switch specifications"
+      - url: "https://www.cisco.com/c/en/us/products/collateral/switches/nexus-9000-series-switches/nexus-9332d-h2r-switch-ds.html"
+        section: "Product overview"
+  - id: Q02
+    scenario_key: "fefceedd3fb35ff2"
+    input_sha256: "fefceedd3fb35ff267c96f870780480b16991d74edf40daa9c001ab1b6672642"
+    fact_ids: [CSE-C-H2R-04, CSE-C-H2R-05]
+    sources:
+      - url: "https://www.cisco.com/c/en/us/products/collateral/switches/nexus-9000-series-switches/nexus-9332d-h2r-switch-ds.html"
+        section: "Table 2. Cisco N9332D-H2R Switch specifications"
+  - id: Q03
+    scenario_key: "fbfc846ce11b9614"
+    input_sha256: "fbfc846ce11b9614b0000816a5c52090dfb34a70f3e7b7fe1a2bc1bf7c8cee63"
+    fact_ids: [CSE-C-H2R-08]
+    sources:
+      - url: "https://www.cisco.com/c/en/us/products/collateral/switches/nexus-9000-series-switches/nexus-9332d-h2r-switch-ds.html"
+        section: "Table 4. Performance and scalability specifications"
+  - id: Q04
+    scenario_key: "097a1f724d34aca6"
+    input_sha256: "097a1f724d34aca6b1d9df3e3991215800ed8e2b1c6e582a1d1a0681658076a3"
+    fact_ids: [CSE-C-SG2-02, CSE-C-SG2-03]
+    sources:
+      - url: "https://www.cisco.com/c/en/us/products/collateral/switches/nexus-9000-series-switches/nexus-9364e-sg2-switch-ds.html"
+        section: "Table 2. Cisco N9364E-SG2 Switches Specifications"
+      - url: "https://www.cisco.com/c/en/us/products/collateral/switches/nexus-9000-series-switches/nexus-9364e-sg2-switch-ds.html"
+        section: "Product overview"
+  - id: Q05
+    scenario_key: "f01af14b5602b1dd"
+    input_sha256: "f01af14b5602b1dd2de0872332d0bfc6c41e173a5d9c4775fe55e0126bae050b"
+    fact_ids: [CSE-C-SG2-01, CSE-C-SG2-02, CSE-C-SG2-03]
+    sources:
+      - url: "https://www.cisco.com/c/en/us/products/collateral/switches/nexus-9000-series-switches/nexus-9364e-sg2-switch-ds.html"
+        section: "Table 2. Cisco N9364E-SG2 Switches Specifications"
+      - url: "https://www.cisco.com/c/en/us/products/collateral/switches/nexus-9000-series-switches/nexus-9364e-sg2-switch-ds.html"
+        section: "Product overview"
+  - id: Q06
+    scenario_key: "4a727744dcf30fc9"
+    input_sha256: "4a727744dcf30fc930feffd4246ed9bab4fdc1f09b0ae25afdfd3c6061c6f1ac"
+    fact_ids: [CSE-C-SG2-04, CSE-C-SG2-05]
+    sources:
+      - url: "https://www.cisco.com/c/en/us/products/collateral/switches/nexus-9000-series-switches/nexus-9364e-sg2-switch-ds.html"
+        section: "Product overview"
+      - url: "https://www.cisco.com/c/en/us/products/collateral/switches/nexus-9000-series-switches/nexus-9364e-sg2-switch-ds.html"
+        section: "Table 2. Cisco N9364E-SG2 Switches Specifications"
+  - id: Q07
+    scenario_key: "c4ea9bcf05e64cab"
+    input_sha256: "c4ea9bcf05e64cabe11ee5d18fa5bab21592058877fdfd452859345f7851ca63"
+    fact_ids: [CSE-H-64E-01]
+    sources:
+      - url: "https://www.h3c.com/en/Products_and_Solutions/InterConnect/Switches/Products/Data_Center/Aggregation/S9800/H3C_S9827/"
+        section: "S9827 series model overview (3 models)"
+  - id: Q08
+    scenario_key: "e567a2e0369e7c5b"
+    input_sha256: "e567a2e0369e7c5b98a1fb8a190930306f5ecccd602a32d7b457773c31c8d7ad"
+    fact_ids: [CSE-H-64E-01, CSE-H-64EP-01]
+    sources:
+      - url: "https://www.h3c.com/en/Products_and_Solutions/InterConnect/Switches/Products/Data_Center/Aggregation/S9800/H3C_S9827/"
+        section: "S9827 series model overview (3 models)"
+  - id: Q09
+    scenario_key: "ba9d5f3c97fb00de"
+    input_sha256: "ba9d5f3c97fb00de65a26e3028e0920ee6275e18ad6e91ead9370f3cd700a0f7"
+    fact_ids: [CSE-C-SG2-02, CSE-C-SG2-03, CSE-H-64EP-01]
+    sources:
+      - url: "https://www.cisco.com/c/en/us/products/collateral/switches/nexus-9000-series-switches/nexus-9364e-sg2-switch-ds.html"
+        section: "Table 2. Cisco N9364E-SG2 Switches Specifications"
+      - url: "https://www.cisco.com/c/en/us/products/collateral/switches/nexus-9000-series-switches/nexus-9364e-sg2-switch-ds.html"
+        section: "Product overview"
+      - url: "https://www.h3c.com/en/Products_and_Solutions/InterConnect/Switches/Products/Data_Center/Aggregation/S9800/H3C_S9827/"
+        section: "S9827 series model overview (3 models)"
+  - id: Q10
+    scenario_key: "e8490f1636540386"
+    input_sha256: "e8490f16365403861de7cebfe5d5bba36b798e8da9b46fca260ad6ba8ea13141"
+    fact_ids: [CSE-C-H2R-01, CSE-H-64E-01]
+    sources:
+      - url: "https://www.cisco.com/c/en/us/products/collateral/switches/nexus-9000-series-switches/nexus-9332d-h2r-switch-ds.html"
+        section: "Table 2. Cisco N9332D-H2R Switch specifications"
+      - url: "https://www.h3c.com/en/Products_and_Solutions/InterConnect/Switches/Products/Data_Center/Aggregation/S9800/H3C_S9827/"
+        section: "S9827 series model overview (3 models)"

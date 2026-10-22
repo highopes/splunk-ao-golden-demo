@@ -1,0 +1,11 @@
+input,output
+Cisco N9332D-H2R 有多少个 400G 端口？机架高度和交换带宽是多少？,Cisco N9332D-H2R 提供 32 个 400G QSFP-DD 端口，机架高度为 1RU，带宽为 25.6 Tbps。
+Nexus N9332D-H2R 的 on-die buffer 和 HBM 各有多大？,N9332D-H2R 的 on-die packet buffer 为 80 MB，另有 8 GB HBM（off-die 高带宽内存深缓存）；两者是不同的缓存，不能合并为一个片上缓存值。
+N9332D-H2R 支持的 ECMP 最大路径数是多少？,128 条。这是 N9332D-H2R 数据表列出的该型号最大 ECMP 路径数，不代表其他 Nexus 型号。
+Cisco N9364E-SG2-O 提供多少个 800G 端口，使用什么接口形态，机架高度是多少？,Cisco N9364E-SG2-O 提供 64 个 800G OSFP 端口，机架高度为 2RU。
+Cisco N9364E-SG2-Q 和 -O 的 800G 接口形态有什么区别？,N9364E-SG2-Q 是 64 × 800G QSFP-DD；N9364E-SG2-O 是 64 × 800G OSFP。两者是不同 SKU，每个型号只有一种 800G 物理接口形态。
+Cisco N9364E-SG2 的 on-die buffer 和数据表中的 switch bandwidth 分别是多少？,N9364E-SG2 的 on-die buffer 为 256 MB（fully shared），数据表中的 switch bandwidth 为 102.4 Tbps。
+H3C S9827-64E 有多少 800G 端口、什么接口形态和机架高度？,H3C S9827-64E 提供 64 个 QSFP-DD800 端口，机架高度为 2U。
+H3C S9827-64E 和 S9827-64EP 在 800G 物理接口与机架高度上有什么区别？,S9827-64E：64 × QSFP-DD800，2U；S9827-64EP：64 × OSFP800，4U。
+只比较 800G 端口数量、接口类型和机架高度，Cisco N9364E-SG2-O 和 H3C S9827-64EP 有何异同？仅凭这些维度能否判定两者总体性能等效？,相同点：两者都提供 64 个 800G OSFP 端口（H3C 写作 OSFP800）。不同点：Cisco N9364E-SG2-O 为 2RU，H3C S9827-64EP 为 4U。不能：仅凭这三个维度无法判定两者总体性能等效。
+“Cisco N9332D-H2R 和 H3C S9827-64E 都是 64 端口 800G 交换机”，这句话正确吗？,不正确。Cisco N9332D-H2R 是 32 × 400G QSFP-DD 交换机；H3C S9827-64E 才是 64 × 800G（QSFP-DD800）交换机。

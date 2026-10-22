@@ -76,6 +76,14 @@ def main():
             count = conn.execute(text("SELECT COUNT(*) FROM langchain_pg_embedding e JOIN langchain_pg_collection c ON e.collection_id=c.uuid WHERE c.name=:name"), {"name": collection}).scalar()
             check(collection, count > 0, f"{count} documents")
         engine.dispose()
+        vectorstore_cfg = domain.config.get("vectorstore", {})
+        if vectorstore_cfg.get("strict_index"):
+            from helpers.pgvector_utils import verify_strict_index
+            try:
+                info = verify_strict_index(args.domain, vectorstore_cfg)
+                check("Strict index metadata", True, ", ".join(f"{k}={v}" for k, v in info.items()))
+            except Exception as exc:
+                check("Strict index metadata", False, str(exc))
     except Exception as exc:
         check("Database / domain data", False, type(exc).__name__ + "; start DB and load domain data")
     try:
@@ -93,13 +101,20 @@ def main():
         except Exception as exc:
             check("Cloud project / log stream", False, type(exc).__name__)
     if args.live and "openai_api_key" not in failures:
-        try:
-            from helpers.llm_utils import get_chat_model
-            llm = get_chat_model(domain.config["model"]["hosted_default_model"], provider="hosted", temperature=0)
-            result = llm.invoke("Reply with OK.")
-            check("LLM endpoint", bool(result.content))
-        except Exception as exc:
-            check("LLM endpoint", False, type(exc).__name__)
+        from helpers.llm_utils import get_chat_model, get_model_runtime_options, message_content_to_text
+        model_cfg = domain.config["model"]
+        models = [model_cfg["hosted_default_model"]]
+        # Domains with explicit hosted API settings (e.g. a model A/B) check every hosted model.
+        if get_model_runtime_options(model_cfg, models[0], "hosted"):
+            models += [m for m in model_cfg.get("hosted_additional_models") or [] if m not in models]
+        for model in models:
+            try:
+                options = get_model_runtime_options(model_cfg, model, "hosted")
+                llm = get_chat_model(model, provider="hosted", temperature=0, **options)
+                result = llm.invoke("Reply with OK.")
+                check(f"LLM endpoint ({model})", bool(message_content_to_text(result.content).strip()))
+            except Exception as exc:
+                check(f"LLM endpoint ({model})", False, type(exc).__name__)
     print("Manual checks still required: evaluator results, policies, traces and experiments.")
     return int(bool(failures))
 

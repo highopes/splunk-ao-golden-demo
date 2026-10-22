@@ -31,6 +31,7 @@ from helpers.galileo_api_helpers import (
     get_galileo_log_stream_id,
 )
 from helpers.agent_control_helpers import init_agent_control
+from helpers.galileo_ingest import apply_domain_reliable_ingest
 from helpers.hallucination_helpers import log_hallucination_for_domain
 from experiments.experiment_helpers import (
     get_all_datasets,
@@ -136,13 +137,25 @@ def render_model_settings(domain_name: str, domain_config_key: str) -> tuple[str
             "or `bedrock_api_key` in `.streamlit/secrets.toml`."
         )
         st.stop()
+    domain_providers = domain_info.get("providers")
+    if domain_providers:
+        provider_options = [p for p in provider_options if p in domain_providers]
+        if not provider_options:
+            st.error(
+                f"Domain **{domain_name}** only supports: {', '.join(domain_providers)}. "
+                "Configure that provider's credential in `.streamlit/secrets.toml`."
+            )
+            st.stop()
 
     # Initialize / repair the stored provider so it's always a configured one.
     if (
         provider_key not in st.session_state
         or _normalize_provider(st.session_state[provider_key]) not in provider_options
     ):
-        st.session_state[provider_key] = default_provider()
+        preferred = default_provider()
+        st.session_state[provider_key] = (
+            preferred if preferred in provider_options else provider_options[0]
+        )
     if prev_provider_key not in st.session_state:
         st.session_state[prev_provider_key] = st.session_state[provider_key]
 
@@ -1095,6 +1108,7 @@ def render_chat_page(
         log_stream = galileo_config.get("log_stream", "default")
         try:
             galileo_logger = create_galileo_logger(project_name, log_stream)
+            apply_domain_reliable_ingest(full_config, getattr(galileo_logger, "project_id", None))
             galileo_logger.enable_agent_control()
             init_agent_control(
                 galileo_logger,

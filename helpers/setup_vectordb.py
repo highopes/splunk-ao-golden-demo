@@ -41,6 +41,7 @@ from langchain_community.document_loaders import DirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from helpers.llm_utils import (
     bedrock_configured,
+    embedding_model_for_provider,
     get_domain_embedding_model,
     get_embedding_dimensions,
     get_embeddings,
@@ -66,7 +67,24 @@ _QA_DOMAINS = {
     "healthcare": ("Healthcare FAQ", "Medication", "Information"),
     "restaurant": ("Restaurant FAQ", "Question", "Answer"),
     "insurance": ("Insurance FAQ", "Question", "Answer"),
+    "cisco_se": ("Data Center Switch Spec Facts", "Question", "Fact"),
 }
+
+# Optional qa.csv columns copied into chunk metadata so retrieval results can
+# cite their official source. Domains without these columns are unaffected.
+_QA_SOURCE_METADATA_COLUMNS = (
+    "fact_id",
+    "vendor",
+    "sku",
+    "attribute",
+    "value",
+    "unit",
+    "source_title",
+    "source_url",
+    "source_section",
+    "source_updated_at",
+    "verified_at",
+)
 
 
 def _cli_name(provider: str) -> str:
@@ -109,22 +127,23 @@ def _build_qa_documents(domain_name: str, docs_dir: str) -> List[Document]:
     title, q_label, a_label = _QA_DOMAINS.get(
         domain_name, (f"{domain_name.title()} FAQ", "Question", "Answer")
     )
-    df = pd.read_csv(os.path.join(docs_dir, "qa.csv"))
+    df = pd.read_csv(os.path.join(docs_dir, "qa.csv"), dtype=str, keep_default_na=False)
+    source_columns = [c for c in _QA_SOURCE_METADATA_COLUMNS if c in df.columns]
     documents: List[Document] = []
     for _, row in df.iterrows():
         question = str(row.get("question", "") or "").strip()
         answer = str(row.get("answer", "") or "")
         body = f"[FAQ] {title}. {q_label}: {question}. {a_label}: {answer}. "
-        documents.append(
-            Document(
-                page_content=body,
-                metadata={
-                    "doc_family": domain_name,
-                    "question": question,
-                    "answer": answer,
-                },
-            )
-        )
+        metadata = {
+            "doc_family": domain_name,
+            "question": question,
+            "answer": answer,
+        }
+        for column in source_columns:
+            value = str(row.get(column, "") or "").strip()
+            if value:
+                metadata[column] = value
+        documents.append(Document(page_content=body, metadata=metadata))
     return documents
 
 
@@ -182,14 +201,34 @@ def setup_vectordb_for_domain(domain_name: str):
     # Decide which indexes to build from the credentials in secrets.toml.
     print("Detecting configured providers from secrets.toml...")
     available = _configured_providers()
+    vectorstore_config = domain_config.config.get("vectorstore", {})
+    # Optional per-domain allowlist (e.g. a strict-index domain pinned to one provider).
+    allowed = vectorstore_config.get("providers")
+    if allowed:
+        allowed = {str(p).strip().lower() for p in allowed}
+        unknown = allowed - set(_ALL_PROVIDERS)
+        if unknown:
+            print(f"❌ Unknown vectorstore.providers entries: {', '.join(sorted(unknown))}")
+            return False
     for provider in _ALL_PROVIDERS:
-        if provider in available:
+        if allowed and provider not in allowed:
+            print(f"  • {_cli_name(provider)}: skipped (not in vectorstore.providers)")
+        elif provider in available:
             print(
                 f"  • {_cli_name(provider)}: configured -> will build "
                 f"{get_collection_name(domain_name, provider)}"
             )
         else:
             print(f"  • {_cli_name(provider)}: skipped ({_not_configured_reason(provider)})")
+    if allowed:
+        missing = sorted(allowed - set(available))
+        if missing:
+            print(
+                "❌ Required provider(s) not configured for this domain: "
+                + ", ".join(_cli_name(p) for p in missing)
+            )
+            return False
+        available = [p for p in available if p in allowed]
 
     if not available:
         print(
@@ -205,7 +244,6 @@ def setup_vectordb_for_domain(domain_name: str):
     )
 
     rag_config = domain_config.config.get("rag", {})
-    vectorstore_config = domain_config.config.get("vectorstore", {})
     chunk_size = rag_config.get("chunk_size", 1000)
     chunk_overlap = rag_config.get("chunk_overlap", 200)
 
@@ -221,7 +259,8 @@ def setup_vectordb_for_domain(domain_name: str):
     # Ordinary copied domains use the same QA + relational CSV contract.
     if Path(docs_dir, "qa.csv").is_file():
         documents = _build_qa_documents(domain_name, docs_dir)
-        load_relational = True
+        # Knowledge-only domains have no relational_*.csv tables to load.
+        load_relational = any(Path(docs_dir).glob("relational_*.csv"))
         print(f"✓ Built {len(documents)} FAQ documents from qa.csv")
     elif domain_name == "mgm_marketing":
         documents = []
@@ -249,22 +288,28 @@ def setup_vectordb_for_domain(domain_name: str):
     for provider in available:
         collection_name = get_collection_name(domain_name, provider)
         try:
-            model = get_domain_embedding_model(vectorstore_config, provider=provider)
+            if vectorstore_config.get("strict_index"):
+                model = embedding_model_for_provider(vectorstore_config, provider)
+            else:
+                model = get_domain_embedding_model(vectorstore_config, provider=provider)
             print(f"\n▶ Building {collection_name} with {_cli_name(provider)} embeddings (model: {model})")
             if provider == "local":
                 print(f"   If the model is missing, run: ollama pull {model}")
             elif provider == "hosted":
                 print(f"   Using OpenAI embeddings ({get_embedding_dimensions()} dimensions).")
             embeddings = get_embeddings(model, provider=provider)
+            collection_metadata = {
+                "embedding_provider": provider,
+                "embedding_model": model,
+            }
+            if provider == "hosted":
+                collection_metadata["embedding_dimensions"] = get_embedding_dimensions()
             vector_store, collection_name = create_pgvector_store(
                 embeddings,
                 domain_name,
                 provider,
                 pre_delete_collection=True,
-                collection_metadata={
-                    "embedding_provider": provider,
-                    "embedding_model": model,
-                },
+                collection_metadata=collection_metadata,
             )
             if documents:
                 ids = [uuid.uuid4() for _ in documents]

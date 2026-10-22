@@ -15,7 +15,9 @@ from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage
 from langchain_core.tools import StructuredTool
 from langchain_core.messages import AIMessage, ToolMessage
 from helpers.llm_utils import (
+    describe_model_runtime,
     get_chat_model,
+    get_model_runtime_options,
     message_content_to_text,
     reset_llm_provider,
     set_llm_provider,
@@ -307,7 +309,13 @@ class LangGraphAgent(BaseAgent):
         
         # Add RAG retrieval tool if enabled in domain config
         rag_config = self.domain_config.config.get("rag", {})
-        if rag_config.get("enabled", False):
+        if rag_config.get("enabled", False) and rag_config.get("generic_tool", True) is False:
+            # The domain exposes its own retrieval tool from logic.py; adding the
+            # generic tool would give the model two equivalent retrieval tools.
+            print(
+                f"RAG enabled for domain '{self.domain_config.name}' via its domain retrieval tool"
+            )
+        elif rag_config.get("enabled", False):
             # Note: RAG chaos is checked per-query in the RAG tool wrapper, not here
             # This allows for intermittent RAG failures rather than session-level
             print(f"✓ RAG enabled for domain '{self.domain_config.name}' - adding LangChain retrieval chain")
@@ -395,6 +403,9 @@ class LangGraphAgent(BaseAgent):
                 or model_config.get("model_name")
             )
         temperature = model_config.get("temperature", 0.1)
+        runtime_options = get_model_runtime_options(
+            model_config, effective_model, self.llm_provider
+        )
         
         # Create the LLM with domain tools
         llm_with_tools = get_chat_model(
@@ -402,7 +413,15 @@ class LangGraphAgent(BaseAgent):
             temperature=temperature,
             name=f"{self.domain_config.name.title()} Assistant",
             provider=self.llm_provider,
+            **runtime_options,
         ).bind_tools(self.tools)
+        if runtime_options:
+            # Record the explicit API settings on each LLM span for A/B audits.
+            llm_with_tools = llm_with_tools.with_config(
+                metadata=describe_model_runtime(
+                    effective_model, self.llm_provider, runtime_options
+                )
+            )
 
         llm_step_name = f"{self.domain_config.name.title()} Assistant"
         last_llm_output: Dict[str, Any] = {"message": None}

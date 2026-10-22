@@ -124,6 +124,17 @@ class DomainManager:
             m for m in bedrock_additional if m != bedrock_default
         ]
 
+        # Optional allowlist of chat providers a domain supports (e.g. a
+        # hosted-only A/B domain). Absent means every configured provider.
+        providers = model_cfg.get("providers")
+        if providers is not None:
+            providers = [str(p).strip().lower() for p in providers]
+            unknown = sorted(set(providers) - {"local", "hosted", "bedrock"})
+            if not providers or unknown:
+                raise ValueError(
+                    f"Domain '{domain_name}' has invalid model.providers: {model_cfg.get('providers')}"
+                )
+
         return {
             "name": domain_config.name,
             "description": domain_config.description,
@@ -138,6 +149,7 @@ class DomainManager:
             "hosted_default_model": hosted_default,
             "bedrock_models": bedrock_models,
             "bedrock_default_model": bedrock_default,
+            "providers": providers,
             "ui": domain_config.config.get("ui", {}),
         }
     

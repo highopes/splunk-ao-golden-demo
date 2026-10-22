@@ -4,6 +4,7 @@ Handles RAG retrieval logic for LangGraph agents using LangChain's retrieval cha
 Uses PostgreSQL with pgvector for vector storage.
 """
 import asyncio
+import json
 import os
 from typing import Optional
 
@@ -18,7 +19,7 @@ from helpers.llm_utils import (
     get_llm_provider,
     get_domain_chat_model,
 )
-from helpers.pgvector_utils import get_pgvector_store
+from helpers.pgvector_utils import get_pgvector_store, strict_index_provider, verify_strict_index
 from domain_manager import DomainManager
 from helpers.agent_control_helpers import domain_controlled_tool
 from setup_env import setup_environment
@@ -26,6 +27,22 @@ from setup_env import setup_environment
 
 # Global cache for RAG instances
 _rag_cache = {}
+
+_RAG_MODES = ("chain", "documents")
+# Source metadata surfaced to the agent in documents mode (when present).
+_CITATION_METADATA_KEYS = (
+    "fact_id",
+    "vendor",
+    "sku",
+    "attribute",
+    "value",
+    "unit",
+    "source_title",
+    "source_url",
+    "source_section",
+    "source_updated_at",
+    "verified_at",
+)
 
 
 # Matches langchain-ai/retrieval-qa-chat without pulling from LangChain Hub.
@@ -44,13 +61,21 @@ _RETRIEVAL_QA_CHAT_PROMPT = ChatPromptTemplate.from_messages(
 
 
 class DomainRAGSystem:
-    """RAG system for a specific domain with eager initialization"""
+    """RAG system for a specific domain with eager initialization.
+
+    ``rag.mode: chain`` (default) answers through an inner retrieval chain LLM.
+    ``rag.mode: documents`` returns the retrieved chunks and their source
+    metadata directly, so the agent model is the only application LLM.
+    """
 
     def __init__(self, domain_name: str, top_k: int = 5, model_name: Optional[str] = None):
         self.domain_name = domain_name
         self.top_k = top_k
         self.model_name = model_name
         self.retrieval_chain = None
+        self.retriever = None
+        self.mode = "chain"
+        self.index_info: dict = {}
         self._initialized = False
 
         self.initialize()
@@ -67,6 +92,11 @@ class DomainRAGSystem:
             rag_config = domain_config.config.get("rag", {})
             vectorstore_config = domain_config.config.get("vectorstore", {})
             model_config = domain_config.config.get("model", {})
+
+            mode = str(rag_config.get("mode") or "chain").strip().lower()
+            if mode not in _RAG_MODES:
+                raise ValueError(f"Unsupported rag.mode '{mode}'; use one of {_RAG_MODES}")
+            self.mode = mode
 
             chat_provider = get_llm_provider()
 
@@ -94,11 +124,24 @@ class DomainRAGSystem:
             # Selects the prebuilt index matching the active provider (Ollama,
             # OpenAI, or Bedrock), falling back to whichever index exists. Raises
             # a clear error pointing at setup_vectordb.py if none has been built.
-            vector_store, _ = get_pgvector_store(
+            # Strict-index domains are pinned to one provider with no fallback.
+            if strict_index_provider(vectorstore_config):
+                self.index_info = verify_strict_index(self.domain_name, vectorstore_config)
+            vector_store, collection_name = get_pgvector_store(
                 self.domain_name, vectorstore_config=vectorstore_config
             )
+            self.index_info.setdefault("collection_name", collection_name)
 
             retriever = vector_store.as_retriever(search_kwargs={"k": self.top_k})
+            self.retriever = retriever
+
+            if self.mode == "documents":
+                self._initialized = True
+                print(
+                    f"✅ RAG system initialized for domain '{self.domain_name}' "
+                    f"(documents mode, index: {self.index_info['collection_name']})"
+                )
+                return
 
             llm = get_chat_model(
                 llm_model,
@@ -123,8 +166,40 @@ class DomainRAGSystem:
             self._initialized = False
             raise
 
+    async def search_documents(self, query: str, config=None) -> dict:
+        """Return retrieved chunks with source metadata (documents mode contract)."""
+        if self.retriever is None:
+            raise RuntimeError(f"RAG retriever not initialized for domain '{self.domain_name}'")
+        docs = await asyncio.to_thread(self.retriever.invoke, query, config)
+        documents = []
+        for rank, doc in enumerate(docs, start=1):
+            item = {"rank": rank, "content": doc.page_content}
+            for key in _CITATION_METADATA_KEYS:
+                value = doc.metadata.get(key)
+                if value not in (None, ""):
+                    item[key] = value
+            documents.append(item)
+        return {
+            "query": query,
+            "retrieval": {
+                "collection": self.index_info.get("collection_name"),
+                "embedding_provider": self.index_info.get("embedding_provider"),
+                "embedding_model": self.index_info.get("embedding_model"),
+                "top_k": self.top_k,
+            },
+            "documents": documents,
+        }
+
     async def search(self, query: str, config=None) -> str:
         """Search the domain's knowledge base (no @control — applied at tool boundary)."""
+        if self.mode == "documents":
+            try:
+                return json.dumps(
+                    await self.search_documents(query, config=config), ensure_ascii=False
+                )
+            except Exception as e:
+                return f"❌ Error during RAG search for domain '{self.domain_name}': {str(e)}"
+
         if not self.retrieval_chain:
             return (
                 f"❌ RAG system not initialized for domain '{self.domain_name}'. "

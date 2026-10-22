@@ -1,0 +1,69 @@
+domain:
+  name: "cisco_se"
+  description: "Cisco presales technical advisor: Cisco/H3C public data-center switch specifications"
+
+# Dedicated Splunk AO project and Log Stream (overrides the shared defaults in
+# .streamlit/secrets.toml through setup_env.py). Never writes to "healthcare".
+galileo:
+  project: "splunk-ao-golden-demo-cisco-se"
+  log_stream: "cisco-se"
+  # galileo 2.6.0 batch flushes send reliable=False, which this tenant stores
+  # with LLM span cost 0.0. Opt this project's ingests into reliable=True so
+  # the platform computes app cost (helpers/galileo_ingest.py).
+  reliable_ingest: true
+
+# Read by experiments/experiment_helpers. group is passed to the SDK's
+# run_experiment(experiment_group=...); dataset_name is the default cloud
+# Dataset in the UI and CLI; dataset_version must equal dataset_sources.yaml.
+# UI and CLI runs share all three and are tagged with model/dataset lineage.
+experiments:
+  group: "Cisco SE Model Economics"
+  dataset_name: "Cisco SE Model Economics Dataset cisco-se-2026-10-21.v2"
+  dataset_version: "cisco-se-2026-10-21.v2"
+
+# UI configuration
+ui:
+  app_title: "🛰️ Splunk AO · Cisco SE Advisor"
+  icon: "🛰️"
+  example_queries:
+    - "How many 400G ports does the Cisco N9332D-H2R have, and how tall is it?"
+    - "What is the physical interface difference between H3C S9827-64E and S9827-64EP?"
+
+# Model configuration. Model A/B is a hosted OpenAI comparison, so the sidebar
+# only offers the Hosted provider for this domain (no fallback to Ollama/Bedrock).
+model:
+  providers:
+    - "hosted"
+  # Required by DomainManager; unused because only "hosted" is allowed above.
+  default_model: "gpt-5-nano"
+  hosted_default_model: "gpt-5-nano"
+  hosted_additional_models:
+    - "gpt-6.1-sol"
+  # Tool calling uses the Responses API for both models. No temperature/top_p is
+  # sent; each model gets an explicit, recorded reasoning effort.
+  hosted_api: "responses"
+  reasoning_effort:
+    gpt-5-nano: "low"
+    gpt-6.1-sol: "low"
+
+# RAG configuration. "documents" mode returns retrieved facts with source
+# metadata straight to the agent (no inner RAG LLM). generic_tool: false keeps a
+# single retrieval tool (search_cisco_se_specs) instead of adding the generic one.
+rag:
+  enabled: true
+  mode: "documents"
+  generic_tool: false
+  top_k: 3
+
+# Available tools for this domain (read-only)
+tools:
+  - "search_cisco_se_specs"
+
+# Vector store configuration. strict_index pins retrieval to one prebuilt
+# collection whose provider/model/dimensions must match; it never falls back.
+vectorstore:
+  provider: "hosted"
+  providers:
+    - "hosted"
+  strict_index: true
+  hosted_embedding_model: "text-embedding-3-large"

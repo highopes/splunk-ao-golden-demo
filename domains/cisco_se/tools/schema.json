@@ -1,0 +1,18 @@
+[
+    {
+        "name": "search_cisco_se_specs",
+        "description": "Search the official Cisco and H3C data-center switch specification facts (read-only). Returns the top matching facts with vendor, SKU, attribute, value, unit and the official source title, URL and section.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The SKU and attribute to look up (e.g. 'N9332D-H2R 400G ports rack units', 'S9827-64EP interface type')"
+                }
+            },
+            "required": [
+                "query"
+            ]
+        }
+    }
+]

@@ -282,7 +282,12 @@ def get_domain_embedding_model(
     provider: Optional[LLMProvider] = None,
 ) -> str:
     """Return the embedding model for the active or specified provider."""
-    resolved = resolve_embedding_provider(provider)
+    return embedding_model_for_provider(vectorstore_config, resolve_embedding_provider(provider))
+
+
+def embedding_model_for_provider(vectorstore_config: dict, provider: LLMProvider) -> str:
+    """Return the configured embedding model for exactly ``provider`` (no fallback)."""
+    resolved = provider
     if resolved == "hosted":
         return (
             vectorstore_config.get("hosted_embedding_model")
@@ -361,24 +366,118 @@ def get_domain_chat_model(domain_config: dict, *, override: Optional[str] = None
     return model_cfg.get("default_model") or get_default_chat_model(provider="local")
 
 
+_REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+# OpenAI's GPT-6 guide: tool calling must use the Responses API.
+_RESPONSES_API_REQUIRED_PREFIXES = ("gpt-6",)
+# Efforts the provider documents as unsupported for a model (prefix match).
+_UNSUPPORTED_REASONING_EFFORTS = {
+    "gpt-6.1-sol": frozenset({"none", "minimal"}),
+    "gpt-6-astra": frozenset({"none"}),
+}
+
+
+def hosted_model_requires_responses_api(model: str) -> bool:
+    """Return True for hosted models whose tool calling needs the Responses API."""
+    return str(model or "").strip().lower().startswith(_RESPONSES_API_REQUIRED_PREFIXES)
+
+
+def validate_reasoning_effort(model: str, effort: str) -> str:
+    """Return a normalized effort or raise before any request is sent."""
+    normalized = str(effort or "").strip().lower()
+    if normalized not in _REASONING_EFFORTS:
+        raise ValueError(
+            f"Unsupported reasoning_effort '{effort}' for {model}; "
+            f"expected one of: {', '.join(_REASONING_EFFORTS)}"
+        )
+    model_lower = str(model or "").strip().lower()
+    for prefix, unsupported in _UNSUPPORTED_REASONING_EFFORTS.items():
+        if model_lower.startswith(prefix) and normalized in unsupported:
+            raise ValueError(
+                f"{model} does not support reasoning_effort '{normalized}'. "
+                "Choose low, medium, high, xhigh, or max."
+            )
+    return normalized
+
+
+def get_model_runtime_options(
+    model_config: Optional[dict],
+    model: str,
+    provider: Optional[str],
+) -> dict:
+    """Return explicit hosted API options declared in a domain's ``model`` config.
+
+    Domains that declare neither ``hosted_api`` nor ``reasoning_effort`` get an
+    empty dict, which keeps the legacy Chat Completions + temperature path.
+    """
+    if provider != "hosted":
+        return {}
+    cfg = model_config or {}
+    options: dict = {}
+
+    efforts = cfg.get("reasoning_effort")
+    effort = efforts.get(model) if isinstance(efforts, dict) else efforts
+    if effort:
+        options["reasoning_effort"] = validate_reasoning_effort(model, effort)
+
+    api = str(cfg.get("hosted_api") or "").strip().lower()
+    if api == "responses":
+        options["use_responses_api"] = True
+    elif api in {"chat", "chat_completions"}:
+        if hosted_model_requires_responses_api(model):
+            raise ValueError(f"{model} requires hosted_api: responses for tool calling")
+        options["use_responses_api"] = False
+    elif api:
+        raise ValueError(f"Unsupported model.hosted_api '{api}'; use 'responses' or 'chat_completions'")
+    return options
+
+
+def describe_model_runtime(model: str, provider: Optional[str], options: Optional[dict] = None) -> dict:
+    """Non-sensitive model settings for trace metadata and experiment tags."""
+    opts = options or {}
+    if provider == "hosted":
+        use_responses = opts.get("use_responses_api")
+        if use_responses is None:
+            use_responses = hosted_model_requires_responses_api(model)
+        api_mode = "responses" if use_responses else "chat_completions"
+        model_provider = "openai"
+    else:
+        api_mode = "provider_default"
+        model_provider = str(provider or "local")
+    return {
+        "application_model": str(model),
+        "model_provider": model_provider,
+        "api_mode": api_mode,
+        "reasoning_effort": str(opts.get("reasoning_effort") or "provider_default"),
+    }
+
+
 def get_chat_model(
     model: str,
     *,
-    temperature: float = 0.1,
+    temperature: Optional[float] = 0.1,
     name: Optional[str] = None,
     num_ctx: int = 8192,
     provider: Optional[LLMProvider] = None,
+    reasoning_effort: Optional[str] = None,
+    use_responses_api: Optional[bool] = None,
 ) -> BaseChatModel:
-    """Create a chat model for the active or specified provider."""
+    """Create a chat model for the active or specified provider.
+
+    ``reasoning_effort`` and ``use_responses_api`` apply to hosted OpenAI
+    models only. When a reasoning effort is set, or the model requires the
+    Responses API, sampling parameters such as temperature are not sent.
+    """
     resolved_provider = provider or get_llm_provider()
     if resolved_provider == "hosted":
         from langchain_openai import ChatOpenAI
         import httpx2
 
         ensure_openai_api_key()
+        requires_responses = hosted_model_requires_responses_api(model)
+        if use_responses_api is False and requires_responses:
+            raise ValueError(f"{model} requires the Responses API for tool calling")
         kwargs = {
             "model": model,
-            "temperature": temperature,
             # Streamlit executes turns on separate asyncio.run loops. The
             # LangChain default async pool is global and can retain a socket
             # belonging to a closed loop. Own the client and close idle sockets.
@@ -387,9 +486,20 @@ def get_chat_model(
             ),
             "timeout": 60,
         }
+        if reasoning_effort:
+            kwargs["reasoning_effort"] = validate_reasoning_effort(model, reasoning_effort)
+        elif temperature is not None and not requires_responses:
+            kwargs["temperature"] = temperature
+        if use_responses_api is not None or requires_responses:
+            kwargs["use_responses_api"] = bool(use_responses_api or requires_responses)
         if name:
             kwargs["name"] = name
         return ChatOpenAI(**kwargs)
+
+    if reasoning_effort or use_responses_api:
+        raise ValueError("reasoning_effort/use_responses_api are only supported for hosted OpenAI models")
+    if temperature is None:
+        temperature = 0.1
 
     if resolved_provider == "bedrock":
         from langchain_aws import ChatBedrockConverse

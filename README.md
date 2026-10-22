@@ -2,7 +2,7 @@
 
 这是一套面向 Cisco / Splunk SE 的演示应用。用户在 Streamlit 聊天界面提问，Agent 调用知识检索和业务工具；SE 再到 Splunk Agent Observability（下文简称 **Splunk AO**）查看执行过程、评估答案质量、定位故障、配置运行时控制，并用测试集验证修改效果。
 
-演示主线是 **Observe → Evaluate → Diagnose → Control → Improve**。默认使用 Healthcare（医疗）场景，也保留 Bank、Insurance、Restaurant 三个行业。
+演示主线是 **Observe → Evaluate → Diagnose → Control → Improve**。默认使用 Healthcare（医疗）场景，也保留 Bank、Insurance、Restaurant 三个行业。另新增只读技术知识场景 **Cisco SE**：基于 Cisco / H3C 公开数据中心交换机规格回答售前问题，并用同一 Dataset 对比两个 OpenAI 模型的质量、Token、成本与时延，导出 CSV 供后续 Splunk Dashboard 使用（见 [5.6](#cisco-se-economics)）。
 
 **当前有验收记录的标准环境：macOS / Healthcare / OpenAI / splunkse。** 2026-10-06 已完成应用与 Console 的连续排练、Reset 后复演、15 样本 Experiment、三个 Control 和核心故障注入；Bank 的切换与 9 样本 Experiment 也已通过，24 项回归通过。详见 [验收记录](documentation/VALIDATION.md)。这些是既有验证结果；新机器、新模型或新配置仍需按本手册检查。
 
@@ -17,6 +17,7 @@
 | 已装好，关机后再次启动 | [3.6 日常启动与关机](#daily-start) |
 | 切换行业、建立新行业、修改配置或升级 | [4. 维护](#maintenance) |
 | 准备客户演示 | [5. 演示](#demo)：先检查，再选标准或深入流程 |
+| 演示双模型质量 / 成本对比，导出 CSV | [5.6 Cisco SE Model Economics](#cisco-se-economics)；Domain 建立过程见 [4.2](#new-domain) |
 | 理解架构、插桩与运行原理 | [6. 架构与原理](#architecture) |
 | 解决启动或演示问题 | [7. 排障](#troubleshooting) |
 | 查看未来 Kubernetes 安装位置 | [2.2 Kubernetes（预留）](#install-kubernetes) |
@@ -120,8 +121,9 @@ Agent 还可用自动添加的 `retrieve_healthcare_documents` 工具。正常�
 | Bank | `bank_customer` | 9 条 QA | C001 查询、银行卡姓名修改规则 |
 | Insurance | `insurance_customer` | 9 条 QA | 客户查询、保险 FAQ |
 | Restaurant | `restaurant_schedule` | 19 条 QA | Thursday Morning 排班、厨房关闭检查清单 |
+| Cisco SE | 无（只读，无 SQL Tool） | 34 条 Cisco / H3C 官方规格事实，带来源 URL | SKU 级售前规格问答；`gpt-5-nano` vs `gpt-6.1-sol` Model Economics |
 
-这四个 Domain 都保留。只有完成该行业自己的 RAG、Tool、Trace、Experiment、Control 验收后才能用于正式现场；Healthcare 的验收不能代替其他 Domain。
+这四个 Domain 都保留。只有完成该行业自己的 RAG、Tool、Trace、Experiment、Control 验收后才能用于正式现场；Healthcare 的验收不能代替其他 Domain。Cisco SE 是新增的独立场景，使用自己的 Project、Log Stream 与 Experiment Group，不读写 Healthcare 资源；它的验收范围与未验证项见 [验收记录](documentation/VALIDATION.md#cisco-se)。
 
 <a id="install"></a>
 
@@ -461,12 +463,17 @@ Bank 的真实 OpenAI RAG、C001 Tool、独立 stream Trace 和 UI 9 样本 Expe
 |---|---|---|---|
 | Insurance | `python helpers/setup_vectordb.py insurance` | [Insurance](http://127.0.0.1:8501/insurance) | `How will my claim affect my premium?`；`Show me data for customer C001.` |
 | Restaurant | `python helpers/setup_vectordb.py restaurant` | [Restaurant](http://127.0.0.1:8501/restaurant) | `What is the closing checklist for the kitchen?`；`Who is on the schedule for Thursday Morning?` |
+| Cisco SE | `python helpers/setup_vectordb.py cisco_se` | [Cisco SE](http://127.0.0.1:8501/cisco_se) | `How many 400G ports does the Cisco N9332D-H2R have, and how tall is it?`；`What is the physical interface difference between H3C S9827-64E and S9827-64EP?` |
 
 对每个行业运行 `scripts/check-demo.sh --domain <行业名> --live`，再人工验证 RAG、Tool、Trace、评分和 Experiment。已加载且没有修改数据时，直接导航切换，不必重建索引。
 
 <a id="new-domain"></a>
 
-### 4.2 建立新 Domain
+### 4.2 建立新 Domain 和新 Demo 内容
+
+本节先给通用方法（`telco` 示例：复制 Healthcare 并建立关系业务表），再给一个已实现的不同类型实例 [Cisco SE](#cisco-se-domain)：只读技术知识 RAG + 双模型 Model Economics。
+
+#### 通用方法：复制 Healthcare（以 `telco` 为例）
 
 以下以 `telco` 为例。先确认 `domains/telco` 不存在，避免把复制内容混入已有行业；实际名称可自行替换，但目录名和配置中的名称要一致。
 
@@ -507,6 +514,108 @@ scripts/check-demo.sh --domain telco
 - [ ] Dataset 与 Experiment 单样本及聚合结果可见。
 - [ ] SQL、PII、Prompt Injection Control scope 正确且已实测。
 
+<a id="cisco-se-domain"></a>
+
+#### 实例：Cisco SE（只读技术知识 RAG + Model A/B）
+
+**目标与区别**
+
+- 目标：售前 SE 根据 Cisco / H3C 公开的数据中心交换机规格回答 SKU 级问题；并在同一 Dataset、同一 Judge 下比较 Model A `gpt-5-nano` 与 Model B `gpt-6.1-sol` 的质量、Token、平台成本与时延。
+- 与 Healthcare 的区别：这是**只读技术知识 RAG**，没有患者 / 客户关系表，也没有可写 SQL Tool，因此不套用上面的 `relational_*.csv` 模板。唯一的 Tool 是 `search_cisco_se_specs`，返回事实及其来源元数据。
+- 知识范围：Cisco N9332D-H2R、N9364E-SG2-Q/-O；H3C S9827-64E、S9827-64EP、S9827-128DH。共 34 条事实，全部来自 4 份官方公开资料（见 `docs/source_manifest.yaml`），核验日期 2026-10-21。不做选型、价格或“总体性能更好”的结论。
+
+**目录结构**
+
+```text
+domains/cisco_se/
+├── config.yaml               # 专属 Project/Stream/Group、模型、RAG、严格索引
+├── system_prompt.json        # 售前顾问角色：先检索，精确到 SKU，引用来源
+├── dataset.csv               # 10 条 input,output（Ground Truth）
+├── dataset_sources.yaml      # Dataset 版本、hash，以及每题对应的 fact_id
+├── docs/qa.csv               # 34 条事实：question/answer + vendor/sku/source_url/verified_at 等
+├── docs/source_manifest.yaml # 官方资料清单（人工维护，不入向量库）
+└── tools/                    # schema.json + logic.py：search_cisco_se_specs（只读）
+```
+
+**配置与资源**
+
+| 项目 | 值 | 说明 |
+|---|---|---|
+| Key / Console | 共享 `.streamlit/secrets.toml` | 不新增密钥 |
+| Project / Stream | `splunk-ao-golden-demo-cisco-se` / `cisco-se` | 覆盖 TOML 默认值；不写入 `healthcare` |
+| Experiment Group | `Cisco SE Model Economics` | UI 与 CLI 运行都进入此 Group |
+| Dataset | `experiments.dataset_name` / `dataset_version`（当前 `cisco-se-2026-10-21.v2`） | 必须与 `dataset_sources.yaml` 一致 |
+| 模型 | 仅 Hosted：`gpt-5-nano`（默认）、`gpt-6.1-sol` | 都经 Responses API 调用 Tool；`reasoning_effort` 均为 `low`；不发送 temperature/top_p |
+| 检索 | `rag.mode: documents`，`top_k: 3`，`generic_tool: false` | 事实与来源直接交给主 Agent，没有内层 RAG LLM |
+| 索引 | `vectorstore.strict_index: true`；collection `cisco_se_hosted_index`；`text-embedding-3-large`，768 维 | provider / 模型 / 维度不匹配即报错，不回退 |
+| 成本 | `galileo.reliable_ingest: true` | 原因见 [7. 排障](#troubleshooting)「LLM Cost 为 0」 |
+
+**官方资料与维护原则**
+
+- 只使用厂商官方公开页面：Cisco Data Sheet，H3C 产品页和 Hardware Information 5W102。事实是简短转述，不复制整份文档；每条事实都带 `source_url`、`source_section`、`verified_at`。
+- 更新资料的顺序：
+  1. 重新核对来源，修改 `docs/qa.csv` 与 manifest。
+  2. 任一 Ground Truth 改变时，修改 `dataset.csv`，在 `dataset_sources.yaml` 升级 `dataset_version` 与 `dataset_hash`，并同步 `config.yaml` 的 `experiments.dataset_name` / `dataset_version`。
+  3. 重建索引，在新名称下创建云端 Dataset，再重跑两个模型。不覆盖旧 Dataset。
+
+**入库与检查**
+
+```bash
+source .venv/bin/activate
+python helpers/setup_vectordb.py cisco_se        # 只建 hosted 向量索引；没有关系表
+scripts/check-demo.sh --domain cisco_se          # 静态检查 + 严格索引元数据
+scripts/check-demo.sh --domain cisco_se --live   # 再做真实连通性检查
+```
+
+然后打开 [Cisco SE](http://127.0.0.1:8501/cisco_se)，点击 **Reset Demo Session**，各问一条 Cisco 和 H3C 问题。
+
+- 回答应给出精确的 SKU 与数值。
+- Console 的 `cisco-se` stream 应有 LLM → Tool（`search_cisco_se_specs`）→ Retriever 的 Trace，Retriever 输出带 `source_url`。
+
+**同一 Dataset、双模型与 CSV**
+
+```bash
+./scripts/run-cisco-se-ab --preflight-only
+./scripts/run-cisco-se-ab
+./scripts/export-cisco-se-economics --experiment-ids <A_ID>,<B_ID>
+```
+
+- `--preflight-only` 只做检查，不创建也不运行任何东西。检查项包括：密钥、Dataset hash、严格索引、两家厂商的检索、Scorer、两个模型的真实 Tool 调用、Project/Group/Dataset，以及 reliable ingest。
+- 不带参数时，在同一 Dataset 上依次运行 `gpt-5-nano`、`gpt-6.1-sol`。之后读回 Trace、Judge 与 Cost，写入 `data/cisco_se_ab_runs/<run_id>.json`；终端会打印两个 Experiment ID。
+- 导出是只读的，生成 `data/cisco_se_model_economics.csv`。
+
+也可以在 UI 中运行：
+
+1. Experiments →「1️⃣ Dataset Setup」选 **Select Existing Dataset by Name**（默认值就是 `experiments.dataset_name`），点 **Load Dataset**。
+2. 在「Select Metrics」只保留 **Ground Truth Adherence** 与 **Context Adherence**，取消 UI 默认勾选的 Prompt Injection，与 runner 的 Judge 保持一致。
+3. 在侧边栏选择模型，在「3️⃣ Run Experiment」点 **🚀 Run Experiment**。
+4. 换另一个模型，指标不变，用同一 Dataset 再运行一次。
+
+UI 运行同样会自动进入 Group 并带上模型与 Dataset 血缘标签，导出器可以直接读取。导出时不带 `--experiment-ids` 会导出整个 Group，其中属于旧 Dataset 版本的行会标为不可比较。字段与判定规则见 [CSV 数据契约](documentation/CISCO_SE_MODEL_ECONOMICS_CSV.md)。
+
+**哪些自动完成，哪些必须显式配置**
+
+| 自动 | 必须显式配置或在云端创建 |
+|---|---|
+| `DomainManager` 发现 `domains/cisco_se`；生成页面 `/cisco_se`；侧边栏只显示 Hosted 及两个模型；从 schema/logic 加载 Tool；Project / Stream 在首次写入时创建 | 用 `setup_vectordb.py cisco_se` 建索引；Experiment Group 与云端 Dataset 由 runner（或 UI「Create from Sample Test Data」）创建；租户必须已有 Ground Truth Adherence 与 Context Adherence Scorer；Controls 未配置（见 [Roadmap](#future)） |
+
+**验收项**（结果见 [验收记录](documentation/VALIDATION.md#cisco-se)）
+
+- [ ] `check-demo --domain cisco_se` 通过，严格索引元数据匹配。
+- [ ] 一条 Cisco、一条 H3C 非预置问法得到带来源的正确回答，Trace 只出现在 `cisco-se`。
+- [ ] `--preflight-only` 全部 PASS，两个模型都返回预期的 Model ID。
+- [ ] 两个 Experiment 都在 `Cisco SE Model Economics` Group，使用同一 Dataset 的 ID / version / hash。
+- [ ] 导出的 CSV 校验通过，并人工核对一组 A/B 同题的费用和评分。
+
+**常见报错**（详见 [7. 排障](#troubleshooting)）
+
+- 严格索引不匹配：重跑 `setup_vectordb.py cisco_se`。
+- Dataset hash 不一致：本地 Dataset 已修改，但没有升级版本名。
+- `configure_rate_limit` 权限枚举错误：已由 `helpers/galileo_compat.py` 兼容。
+- LLM Cost 为 0：检查 `reliable_ingest`。
+
+**对 Healthcare 的影响**：没有。Healthcare 的 YAML、Prompt、Tool、关系表、索引、Project/Stream 和 Controls 都没有修改。共享代码中新增的行为只在 Domain YAML 显式开启时生效，Healthcare 均未开启，包括：Responses API、documents 模式、严格索引、reliable ingest、Experiment Group 与血缘标签。回归结果见验收记录。
+
 ### 4.3 修改配置：改哪里，改后做什么
 
 OpenAI Key 决定是否显示 Hosted provider，`model.hosted_default_model` 与模型列表在 Domain YAML 中。选择的模型用于主 Agent、SQL 生成和 RAG LLM；现场使用预验收的模型。
@@ -528,6 +637,11 @@ OpenAI Key 决定是否显示 Hosted provider，`model.hosted_default_model` 与
 | 评测用例/参考答案 | Domain `dataset.csv` 或上传 CSV | 在 UI 创建新名称/版本的云端 Dataset，再跑 Experiment | 不需要；本地文件不会自动更新云端 Dataset |
 | Control 状态、阈值、阶段或动作 | Console → Controls 与对应 stream 关联 | 发新请求，检查实际 Control 决策；对比时 Reset | 不需要；每轮聊天会刷新策略 |
 | 数据库端口、用户名、密码、库名 | secrets 与实际数据库 | 按下一小节同步变更，再重启 App | 新库需要加载；仅端口/密码变更不需要 |
+| 本 Domain 允许的 provider、模型调用方式、推理强度 | Domain `model.providers`、`model.hosted_api: responses`、`model.reasoning_effort.<模型>` | 重启 App；跑 `./scripts/run-cisco-se-ab --preflight-only` 确认两个模型都能真实调用 Tool | 不需要 |
+| RAG 返回方式与工具 | Domain `rag.mode: documents`（直接返回事实与来源）、`rag.generic_tool` | 重启 App，检查 Retriever 输出与 Tool 名称 | 不需要 |
+| 严格索引 | Domain `vectorstore.strict_index`、`vectorstore.providers`、`hosted_embedding_model` | 重跑该 Domain loader 和 `check-demo` | **需要**；不匹配时直接报错，不回退 |
+| Experiment Group、默认 Dataset 名称与版本 | Domain `experiments.group`、`dataset_name`、`dataset_version` | 版本必须与 `dataset_sources.yaml` 一致；新版本使用新名称创建云端 Dataset，再重跑 | 不需要 |
+| 平台计算 LLM Cost | Domain `galileo.reliable_ingest: true` | 重启 App；新 Trace 的 LLM Span 应有非零 Cost（历史 Trace 不变） | 不需要 |
 
 UI 的模型选择用于主 Agent、SQL 生成与 RAG LLM。Domain 的 `model.temperature` 控制主 Agent；RAG LLM 当前使用固定 `0.1`，不要把一个温度字段理解成全部 LLM 的统一设置。Hosted 默认模型优先来自 Domain YAML，仅改 secrets 的 `openai_default_chat_model` 不会覆盖已有的 `hosted_default_model`。
 
@@ -626,8 +740,14 @@ secrets 的备份单独安全保存。`pg_dump` 不包含云端 Trace、Dataset�
 | Signals | 平台能力 | 本 Demo 未验证，不进入主线 |
 | Annotation / Queue | 平台能力 | 无自然应用操作链，当前未集成主线 |
 | AutoTune / Eval Feedback | 平台能力 | 当前未集成主线；未来扩展 |
+| Cisco SE 只读 RAG（Cisco / H3C 规格） | [Cisco SE](http://127.0.0.1:8501/cisco_se) → `cisco-se` stream → LLM / `search_cisco_se_specs` / Retriever | Live verified：真实模型与平台 Trace；Streamlit Chat 已用两个模型各实测一次非预置问题，回答带官方来源，平台 Cost 非 0；Console GUI 复核 **Not verified** |
+| Cisco SE Model A/B Experiment | `./scripts/run-cisco-se-ab` → Group `Cisco SE Model Economics` | Live verified（CLI）：两个模型各 10 样本、同一 Dataset、GT Adherence 与 Context Adherence 评分、平台 Cost 已读回；UI Experiments 页可加载同一 Dataset，但 UI 运行与 Console GUI 复核 **Not verified** |
+| Cisco SE Model Economics CSV | `./scripts/export-cisco-se-economics` → `data/cisco_se_model_economics.csv` | Live verified：只读导出真实数据并校验；Splunk Dashboard 不在本仓库 |
+| Cisco SE Controls / Chaos / Hallucination | — | **Not verified**：未配置，见 [Roadmap](#future) |
 
-任何 JSON 错误不必然成为平台 span FAIL；必须看真实 metrics 和 Control 证据。不预设所有 Tool/LLM/Trace 层 Evaluator 都 PASS/FAIL。当前实时聊天 stream 的 Agent Cost 显示 0，不能据此推断实际免费；成本讲解使用有值的已验收 Experiment sample，并区分 Agent 与 Evaluator 用量。
+任何 JSON 错误不必然成为平台 span FAIL；必须看真实 metrics 和 Control 证据。不预设所有 Tool/LLM/Trace 层 Evaluator 都 PASS/FAIL。
+
+当前实时聊天 stream 的 Agent Cost 显示 0，这不表示实际免费。原因是 galileo SDK 2.6.0 的批量上报使用 `reliable=False`，本租户对这类上报的 LLM Span 记 0 成本。Healthcare 未开启修正，讲解成本时使用有值的已验收 Experiment sample，并区分 Agent 与 Evaluator 用量。Cisco SE 已开启 `galileo.reliable_ingest`，新 Trace 由平台按默认价格计算 Cost，详见 [7. 排障](#troubleshooting)。
 
 <a id="pre-demo"></a>
 
@@ -896,7 +1016,112 @@ Sloppiness 不改业务表；Data Corruption 是上游 Prompt 驱动的模拟，
 
 **话术：** “行业变化主要通过配置、数据和工具表达，采集与评测框架可以共用。每个行业的执行证据和质量标准仍要单独核对。”Insurance / Restaurant 用[维护表中的例题](#switch-domain)分别演示 FAQ 与客户/排班查询，但正式展示前需独立验收；不可将 Restaurant 讲成患者或客户账户场景。结束返回 Healthcare、Reset 并恢复标准模型。
 
-### 5.6 场景之间如何衔接
+<a id="cisco-se-economics"></a>
+
+### 5.6 Cisco SE：双模型 Model Economics 对比（新增）
+
+本场景独立于 Healthcare 主线（5.3 / 5.4 不变），建议讲解 8–12 分钟，不含等待全部异步评分。故事线是：售前回答必须精确到 SKU 并有官方依据 → 用同一测试集比较两个模型 → 同时看质量与经济性 → 把结果导出为 Dashboard 可消费的数据。
+
+**结论来自本次结果，不预设哪个模型更好或更省钱。**
+
+Domain 结构与命令见 [4.2 Cisco SE 实例](#cisco-se-domain)；当前验收范围见[验收记录](documentation/VALIDATION.md#cisco-se)。其中 Streamlit 点选运行 Experiment 和 Console GUI 复核标为 **Not verified**，正式演示前必须亲自排练一次。
+
+可复制的例题：
+
+- `How many 400G ports does the Cisco N9332D-H2R have, and how tall is it?`
+- `What is the physical interface difference between H3C S9827-64E and S9827-64EP?`
+- `“Cisco N9332D-H2R 和 H3C S9827-64E 都是 64 端口 800G 交换机”，这句话正确吗？`（陷阱题：正确答案应予以纠正）
+
+#### 准备（演示前 15–40 分钟）
+
+1. 按[日常启动](#daily-start)启动数据库与 App，执行 `scripts/check-demo.sh --domain cisco_se --live`；严格索引元数据应为 PASS。
+2. 执行 `./scripts/run-cisco-se-ab --preflight-only`，应全部 PASS。它确认以下内容，且不创建任何资源：
+   - 两个模型都能真实完成 Tool 调用，并返回预期 Model ID；
+   - Dataset hash、索引、两家厂商的检索、Scorer、Project/Group 和 reliable ingest 都正常。
+3. 准备两个已完成的 Experiment，二选一：
+   - 现场前执行 `./scripts/run-cisco-se-ab`（两个模型约 6–8 分钟，Judge 读回另需几分钟），记下输出的两个 Experiment ID 与 manifest 路径；
+   - 或使用验收记录中已完成的 run，并标明采集时间，不能说成是本次实时运行。
+4. 浏览器标签页：
+   - [Cisco SE](http://127.0.0.1:8501/cisco_se)：点 **Reset Demo Session**；确认侧边栏 Provider 只有 Hosted，模型为 `gpt-5-nano`；Chaos 全关闭。
+   - Console：Project `splunk-ao-golden-demo-cisco-se`，分别打开 `cisco-se` stream 和 Experiments 中的 Group `Cisco SE Model Economics`。
+   - 终端：位于仓库根目录。
+5. 确认 Dataset：Group 中两个 Experiment 的 Dataset 都是 `experiments.dataset_name` 指向的同一个版本（当前 v2）。
+
+#### Act A — 业务问题：精确到 SKU、有官方依据（约 3 分钟）
+
+- **操作：** 在 Cisco SE 页面依次发送例题 1 和例题 3（或点击页面上的示例按钮）。
+- **现象：** 回答给出 SKU 与数值（32 × 400G QSFP-DD、1RU；N9332D-H2R 不是 64 × 800G），并引用来源。
+- **Console 位置：** `cisco-se` stream → 最新 Trace，依次展开：
+  - LLM Span；
+  - Tool `search_cisco_se_specs`；
+  - Retriever：输出含 `vendor`、`sku`、`source_url`、`verified_at`；
+  - 最终 LLM Span。
+- **话术：** “售前回答必须精确到 SKU，并能追溯到厂商官方资料。这里每个数字都来自检索到的公开规格，Trace 让我们能证明答案的依据。”
+- **成功标志：** 数值与 Retriever 返回的事实一致；Trace 只出现在 `cisco-se`，不出现在 `healthcare`。
+- **未达预期处理：**
+  - Retriever 为空或命中错误 SKU：换用另一条例题，并检查严格索引（`check-demo --domain cisco_se`）。
+  - 模型没有调用 Tool：说明这条回答不可作为依据，打开准备好的历史 Trace 并标明采集时间。
+
+#### Act B — 相同测试集、相同 Judge，只换应用模型（约 2–3 分钟）
+
+- **操作：** 在 Console 的 Group `Cisco SE Model Economics` 中并排打开 Model A `gpt-5-nano` 与 Model B `gpt-6.1-sol` 两个 Experiment。也可以在 App → Experiments 展示 **Select Existing Dataset by Name** 默认指向的同一个 Dataset。
+- **现象：** 两个 Experiment 的 Dataset 相同（同一名称、同一 10 条样本），Scorer 都是 Ground Truth Adherence 与 Context Adherence；Experiment 标签记录了 `application_model`、`dataset_version`、`dataset_hash`。
+- **Console 位置：** Project → Experiments → Group → 各 Experiment 的 Dataset 与 Metrics 设置。
+- **话术：** “测试集、检索索引、Prompt 和评分标准都不变，唯一变化是应用使用的 LLM。这样差异才能归因到模型本身。”
+- **成功标志：** 两边 Dataset 与 Judge 一致，且各有 10 条已完成的样本。
+- **未达预期处理：**
+  - Dataset 名称或版本不一致：说明不可直接比较；导出器也会标记 `comparison_ready=0`。
+  - 只完成了一个模型：只展示已完成的那个，不推断另一个模型的结果。
+
+#### Act C — 质量与经济性（约 3 分钟）
+
+- **操作：** 对比两个 Experiment 的以下内容：
+  - Ground Truth Adherence 通过数；
+  - 平均 Context Adherence；
+  - Token、平台 Cost 和 Latency。
+  
+  再挑同一题的两条 Trace 对照答案、评分解释、Token 与 Cost。
+- **现象：** 质量和成本由本次数据决定。按平台默认价格，两个模型的单价相差很大，Token 数也可能不同；Judge 自身的费用单独统计，不计入应用成本。
+- **Console 位置：** Experiment 的 aggregate 视图和单样本；Trace 的 LLM Span 显示 Token 与 Cost。
+- **话术：** “我们同时看‘答得对不对’和‘花了多少’。如果两者质量相同，便宜的模型就是更好的经济选择；如果质量不同，要看差距在哪些题上，以及业务是否接受。”
+- **成功标志：** 能指出一题具体的差异或一致，并说明成本差距来自单价还是 Token。
+- **未达预期处理：**
+  - Judge 仍是 pending：说明评分是异步完成的，稍后刷新；或打开准备好的已完成 run（标明时间）。
+  - Cost 为空或为 0：说明平台尚未定价或上报不完整，不要临时换算价格（见 [7. 排障](#troubleshooting)）。
+
+#### Act D — 导出 CSV，交给 Dashboard（约 2 分钟）
+
+- **操作：** 在终端运行：
+
+  ```bash
+  ./scripts/export-cisco-se-economics --experiment-ids <A_ID>,<B_ID>
+  ```
+
+  不带 `--experiment-ids` 时导出整个 Group。
+- **现象：** 终端打印以下内容：
+  - 每个 Experiment 的行数、可比行数、GT 通过数、应用 Cost、Token、每次通过的成本、平均 / P95 时延，以及单独列出的 Judge 费用；
+  - CSV 读回校验：69 列表头、必填字段、数值格式、无重复 Trace；
+  - 输出路径 `data/cisco_se_model_economics.csv`。
+
+  两个模型的同一题可以按 `scenario_key` 对齐。
+- **Console 位置：** 无；导出只读，不向平台写入。
+- **话术：** “平台里的真实数据被整理成一张扁平表，可以直接供 Splunk Enterprise Dashboard 使用。Dashboard 会在另一个仓库单独实现，本次演示到可消费的数据为止。”
+- **成功标志：** 校验通过，两个模型的可比行数与题数一致；字段含义可在 [CSV 数据契约](documentation/CISCO_SE_MODEL_ECONOMICS_CSV.md)中查到。
+- **未达预期处理：** 出现 `comparison_ready=0` 时，查看 `comparison_warning` 列，并如实解释原因（Judge pending、Cost 缺失、Dataset 版本不同等）。不要修改 CSV 或手工补值。
+
+#### 失败与回退
+
+| 现象 | 现场解释 | 处理 |
+|---|---|---|
+| 模型、Key 或 SDK 不可用（preflight FAIL） | 账号权限或模型可用性问题，不代表 Demo 逻辑 | 不运行这个模型；展示已完成的历史 run 并标明采集时间 |
+| RAG 未命中或答案缺少来源 | 检索依据不足，答案不能作为售前结论 | 换例题；检查严格索引；必要时重跑 `setup_vectordb.py cisco_se` |
+| Judge 评分 pending | 评分在平台异步完成 | 稍后刷新；导出时这类行为 `comparison_ready=0` |
+| Cost 为空或为 0 | 平台尚未计算，或 `reliable_ingest` 未生效 | 不手工换算；检查 YAML 并重跑；成本讲解使用已有值的 run |
+| Dataset 版本不一致 | 测试集不同，结果不能直接比较 | 用同一 Dataset 重跑；或用 `--experiment-ids` 只导出同一版本的两个 Experiment |
+
+结束后点击 **Reset Demo Session**，侧边栏恢复为 `gpt-5-nano`。需要回到 Healthcare 时，从侧边栏切换并按[演示后恢复](#reset-demo)处理。
+
+### 5.7 场景之间如何衔接
 
 推荐场景衔接：
 
@@ -912,7 +1137,7 @@ Sloppiness 不改业务表；Data Corruption 是上游 Prompt 驱动的模拟，
 
 <a id="reset-demo"></a>
 
-### 5.7 演示后恢复
+### 5.8 演示后恢复
 
 1. Console 恢复：Harmful SQL **Enabled**；PII **Disabled**；Prompt Injection **Disabled**。本地 Reset 按钮不会改变这些远程策略。
 2. 点击 Sidebar → **Reset Demo Session**：聊天、选中 Dataset、Agent/Logger 缓存、Chaos 开关与 counters 全部清空；下一请求创建新 Session。新浏览器会话也默认无 Chaos。
@@ -1060,11 +1285,13 @@ LangGraph LLM / Tool / Chain / Retriever events
 - **Experiments：** SDK 拥有 sample Trace 生命周期；Agent 不提前 conclude/flush SDK 的 Trace。Dataset 只在确切 Conflict 时复用，不掩盖权限/网络错误。
 - **Dependencies：** 已固定本地验证的完整依赖；默认不安装当前行业不用的金融行情、Chroma、PDF/ML 包。
 - **Upstream boundary：** 保留上游目录与四个行业；少量修复有 [变更清单](documentation/UPSTREAM.md)。原始 README 存档不作为当前安装指导。
+- **Cisco SE 的显式开关：** Responses API Tool Calling（`model.hosted_api`）、documents 模式检索、严格索引、reliable ingest、Experiment Group 与血缘标签，都只在 Domain YAML 声明时生效；其他 Domain 走原路径。`helpers/galileo_compat.py` 容忍租户返回、但 SDK 枚举中缺少的权限 action（如 `configure_rate_limit`），只影响权限解析，不改变权限本身。
 
 验证入口：
 
 ```bash
 python -m unittest discover -s tests -p 'test_runtime.py' -v
+python -m unittest tests.test_cisco_se_domain -v   # Cisco SE：Domain、Dataset、来源、模型参数、严格索引、导出器（mock 数据，不调用云端）
 # 需要本机 DB；使用隔离临时库，模型与 embedding 为 fixture，不产生云端费用：
 DEMO_TEST_POSTGRES=1 python -m unittest discover -s tests -p 'test_postgres_integration.py' -v
 ```
@@ -1094,7 +1321,12 @@ DEMO_TEST_POSTGRES=1 python -m unittest discover -s tests -p 'test_postgres_inte
 | Data Corruption 答案没有错误 | 这是 Prompt 驱动注入；模型可能拒绝/忽略。换已验收模型，或将本段移出主线 |
 | Experiment 显示失败 | 先确认 Dataset/reference、OpenAI、embedding、scorer 可用性；检查样本 Trace 与实际 run 状态 |
 | Experiment 未评分 | 等待原生异步评估；只有创建 run 不代表评分完成 |
-| Dashboard 无 cost/token | provider/平台数据可见性不同；synthetic Hallucination 故意不提供假指标 |
+| Dashboard 无 cost/token | provider/平台数据可见性不同；synthetic Hallucination 故意不提供假指标；LLM Span Cost 为 0 见下一行 |
+| LLM Span 有 Token 但 Cost 为 0 | galileo SDK 2.6.0 批量上报使用 `reliable=False`，本租户对这类上报的 LLM Cost 记 0。需要成本的 Domain 在 YAML 设置 `galileo.reliable_ingest: true`（Cisco SE 已开启），重启后的新 Trace 才由平台按默认价格计算；历史 Trace 不会回填。不要手工换算价格；导出器会将这类行标为 `comparison_ready=0` |
+| 报错含 `configure_rate_limit` 不是合法 Permission action | 租户返回了比 SDK 新的权限枚举，会导致 `get_project(id=)`、Experiment Group 查询失败。确认运行入口调用了 `helpers/galileo_compat.tolerate_unknown_permission_actions()`；升级 SDK 后可再评估是否保留 |
+| Cisco SE preflight 报 Dataset hash / 版本不一致 | 本地 `dataset.csv` 与 `dataset_sources.yaml` 或同名云端 Dataset 不同。改动 Ground Truth 后升级 `dataset_version` 和 `experiments.dataset_name`，用新名称创建 Dataset；不要覆盖旧版本 |
+| Cisco SE 报严格索引不匹配或缺失 | collection 的 provider / embedding 模型 / 维度与 YAML 不一致。执行 `python helpers/setup_vectordb.py cisco_se`，再跑 `check-demo --domain cisco_se` |
+| Context Adherence 在 Trace 根上为空 | 该 Scorer 作用于 LLM Span，根上只显示 roll-up。导出器取生成最终答案的那个 LLM Span 的分数，详见 [CSV 数据契约](documentation/CISCO_SE_MODEL_ECONOMICS_CSV.md) |
 | 界面显示 Agent Streams | 新产品名称与 Galileo SDK 的 Log Stream 概念对应；实际租户链接以 UI 为准 |
 
 <a id="future"></a>
@@ -1116,9 +1348,21 @@ Kubernetes 的安装位置已预留在 [2.2](#install-kubernetes)。以下功能
 
 未来 profile 放在独立配置层扩展；当前 `backend_profile` 只接受 `splunkse`。不将未来环境混入现阶段安装和故事线。
 
-### 8.3 补充资料
+### 8.3 Cisco SE 后续扩展（本次不做）
+
+以下内容当前均未实现，也不属于现场能力：
+
+- Cisco SE 专属 Hallucination fixture，以及基于文档的 Prompt Injection（恶意内容藏在检索资料中）。
+- Cisco SE 的 Agent Control 策略演示与 Chaos 故障注入（当前未配置，也未验收）。
+- 官方资料的长期版本更新：定期重新核验，按 Dataset 版本留存历史。
+- 自动化资料摄入，以及 Citation Accuracy（引用准确性）评分。
+- Fixed-Context 模型对比：固定检索结果，只比较生成能力。
+- Splunk Enterprise Dashboard：在[另一仓库](https://github.com/highopes/splunk-galileo-dashboard)单独实施，消费 `data/cisco_se_model_economics.csv`；本仓库不做 Dashboard。
+
+### 8.4 补充资料
 
 - [VALIDATION.md](documentation/VALIDATION.md)：真实验收环境、Trace 与 Experiment 证据、限制和已知问题。
+- [CISCO_SE_MODEL_ECONOMICS_CSV.md](documentation/CISCO_SE_MODEL_ECONOMICS_CSV.md)：Cisco SE Model Economics CSV 的字段、判定规则与下游接口。
 - [CHAOS_ENGINEERING.md](documentation/CHAOS_ENGINEERING.md)：五种故障注入的实现边界。
 - [UPSTREAM.md](documentation/UPSTREAM.md)：上游来源、本地修改和升级边界。
 - [UPSTREAM_README.md](documentation/UPSTREAM_README.md)：原始 README 存档，不作为当前安装指导。
