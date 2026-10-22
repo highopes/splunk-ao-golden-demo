@@ -166,4 +166,16 @@ class RuntimeTests(unittest.TestCase):
         logger.flush.assert_not_called()
 
 
+    def test_sidebar_titles_do_not_repeat_domain_icons(self):
+        with patch.dict(os.environ,{'_GALILEO_ENV_LOADED':'true'}):
+            from app import navigation_title
+        dm=DomainManager()
+        for domain in dm.list_domains():
+            ui=dm.get_domain_info(domain).get('ui',{})
+            title=navigation_title(ui['app_title'],ui['icon'])
+            self.assertTrue(title and not title.startswith(ui['icon']),domain)
+        self.assertEqual(navigation_title('🛰️ Cisco SE','🛰'),'Cisco SE')
+        self.assertEqual(navigation_title('Telco Online Assistant','📡'),'Telco Online Assistant')
+        self.assertEqual(navigation_title('🩻','🩻'),'🩻')
+
 if __name__=='__main__': unittest.main()

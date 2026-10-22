@@ -11,7 +11,7 @@
 | 环境 | Python 3.12 实测依赖锁；默认移除未使用的金融/Chroma/PDF 重依赖；PDF 解析保留可选安装 |
 | macOS | 项目专属 PostgreSQL 集群、启动、只读预检；保留可选 Docker 配置 |
 | secrets | 固定仓库路径读取；Console 根地址自动推导 API、Control、租户登录；可选覆盖；行业 stream 来自 YAML；placeholder 不视为有效 provider |
-| UI / 行业 | Healthcare 默认主线；四行业分别使用 stream；轻量标题、状态、Session reset；Reset 显式将 Chaos widget 状态设为 false，避免浏览器重新带回旧勾选 |
+| UI / 行业 | Healthcare 默认主线；四行业分别使用 stream；轻量标题、状态、Session reset；Reset 显式将 Chaos widget 状态设为 false，避免浏览器重新带回旧勾选；修复上游侧边栏把默认行业列两次、emoji 图标重复显示的问题（默认行业的 `/<domain>` 页隐藏但可直接访问，侧边栏标题去掉与 `icon` 重复的 emoji）；Healthcare 标题保持上游的 `Online Healthcare Assistant` |
 | 模型 / RAG | 所选模型用于主 LLM、SQL 与 RAG；独立 async HTTP 客户端避免跨循环连接池；显式传递 RunnableConfig 采集检索 context |
 | Logger | Tool 绑定当前会话/Experiment logger；RAG 答案摘要是 Tool；修复 ns 单位；错误结束 Trace |
 | SQL | Control 看到实际 SQL；单条 SELECT 检查与 READ ONLY transaction 兜底；正确编码密码并回收连接 |

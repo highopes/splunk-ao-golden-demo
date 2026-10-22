@@ -8,7 +8,7 @@ galileo:
 
 # UI configuration
 ui:
-  app_title: "🩻 Splunk AO · Healthcare Assistant"
+  app_title: "🩻 Online Healthcare Assistant"
   icon: "🩻"
   example_queries:
     - "What is the dosage and common side effects of Lisinopril?"

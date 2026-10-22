@@ -23,7 +23,7 @@ experiments:
 
 # UI configuration
 ui:
-  app_title: "🛰️ Splunk AO · Cisco SE Advisor"
+  app_title: "🛰️ Online Cisco SE Advisor"
   icon: "🛰️"
   example_queries:
     - "How many 400G ports does the Cisco N9332D-H2R have, and how tall is it?"

@@ -1166,6 +1166,14 @@ def render_chat_page(
     process_input_for_simple_app(user_input)
 
 
+def navigation_title(app_title: str, icon: str) -> str:
+    """Drop a leading icon from the title; st.Page already renders the icon."""
+    if icon and app_title.startswith(icon):
+        rest = app_title[len(icon):].lstrip("\ufe0f").strip()
+        return rest or app_title
+    return app_title
+
+
 def create_domain_page(domain_name: str):
     """Create a page function for a specific domain"""
     def page_func():
@@ -1207,6 +1215,7 @@ def main():
                 ui_config = domain_info.get("ui", {})
                 app_title = ui_config.get("app_title", f"{domain.title()} Assistant")
                 app_icon = ui_config.get("icon", "🤖")  # Default to robot emoji
+                nav_title = navigation_title(app_title, app_icon)
                 
                 # Create page using st.Page
                 is_default = (domain == default_domain)
@@ -1216,18 +1225,21 @@ def main():
                     # Default page (root URL)
                     default_page = st.Page(
                         create_domain_page(domain),
-                        title=app_title,
+                        title=nav_title,
                         icon=app_icon,
                         default=True
                     )
                     pages.append(default_page)
                 
-                # Named path for all domains
+                # Named path for all domains. The default domain is already
+                # listed at the root URL, so its named URL stays reachable
+                # without a second sidebar entry.
                 page = st.Page(
                     create_domain_page(domain),
-                    title=app_title,
+                    title=nav_title,
                     url_path=f"/{domain}",
-                    icon=app_icon
+                    icon=app_icon,
+                    visibility="hidden" if is_default else "visible",
                 )
                 pages.append(page)
                 

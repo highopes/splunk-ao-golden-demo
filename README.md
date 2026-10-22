@@ -338,7 +338,7 @@ python helpers/setup_vectordb.py healthcare
 scripts/start-demo.sh
 ```
 
-等价入口是激活 `.venv` 后执行 `streamlit run app.py`。浏览器打开 [默认 Healthcare 页面](http://127.0.0.1:8501) 或 [Healthcare 命名页面](http://127.0.0.1:8501/healthcare)。
+等价入口是激活 `.venv` 后执行 `streamlit run app.py`。浏览器打开 [默认 Healthcare 页面](http://127.0.0.1:8501) 或 [Healthcare 命名页面](http://127.0.0.1:8501/healthcare)。两个地址是同一个页面，标题为 `🩻 Online Healthcare Assistant`。侧边栏每个行业只列一项，Healthcare 指向根地址；直接打开 `/healthcare` 时侧边栏没有高亮项，属正常。
 
 1. 侧边栏 **Model → Model provider** 选 `Hosted (OpenAI)`，**Select Model** 选 `gpt-4o`。确认 **Chaos Controls** 的五个开关全关闭。
 2. 如看到 `Project not found` / `Log stream not found`，先确认 YAML 名称与访问权限；应用创建 Logger 的过程可以建立有权限的资源，必要时刷新。连接失败时按提示检查配置，再点 **Retry Splunk AO Connection**。
@@ -483,7 +483,7 @@ cp -R domains/healthcare domains/telco
 
 按此顺序定制：
 
-1. YAML 的 `domain.name=telco`、UI、例题、模型、RAG、Tools。
+1. YAML 的 `domain.name=telco`、UI、例题、模型、RAG、Tools。UI 的 `ui.icon` 是侧边栏图标；`ui.app_title` 同时用作页面大标题和侧边栏名称，沿用其他行业的 `<图标> Online … Assistant` 格式，例如 `📡 Online Telco Assistant`。标题开头与 `icon` 相同的 emoji 在侧边栏会自动去掉，不会显示两个图标。
 2. Prompt 中角色与工具名称。
 3. `docs/qa.csv` 的 question/answer。
 4. `docs/relational_*.csv` 的假业务数据。
@@ -597,7 +597,7 @@ UI 运行同样会自动进入 Group 并带上模型与 Dataset 血缘标签，�
 
 | 自动 | 必须显式配置或在云端创建 |
 |---|---|
-| `DomainManager` 发现 `domains/cisco_se`；生成页面 `/cisco_se`；侧边栏只显示 Hosted 及两个模型；从 schema/logic 加载 Tool；Project / Stream 在首次写入时创建 | 用 `setup_vectordb.py cisco_se` 建索引；Experiment Group 与云端 Dataset 由 runner（或 UI「Create from Sample Test Data」）创建；租户必须已有 Ground Truth Adherence 与 Context Adherence Scorer；Controls 未配置（见 [Roadmap](#future)） |
+| `DomainManager` 发现 `domains/cisco_se`；生成页面 `/cisco_se`（侧边栏与页面标题 `🛰️ Online Cisco SE Advisor`）；侧边栏只显示 Hosted 及两个模型；从 schema/logic 加载 Tool；Project / Stream 在首次写入时创建 | 用 `setup_vectordb.py cisco_se` 建索引；Experiment Group 与云端 Dataset 由 runner（或 UI「Create from Sample Test Data」）创建；租户必须已有 Ground Truth Adherence 与 Context Adherence Scorer；Controls 未配置（见 [Roadmap](#future)） |
 
 **验收项**（结果见 [验收记录](documentation/VALIDATION.md#cisco-se)）
 
@@ -1286,6 +1286,7 @@ LangGraph LLM / Tool / Chain / Retriever events
 - **Dependencies：** 已固定本地验证的完整依赖；默认不安装当前行业不用的金融行情、Chroma、PDF/ML 包。
 - **Upstream boundary：** 保留上游目录与四个行业；少量修复有 [变更清单](documentation/UPSTREAM.md)。原始 README 存档不作为当前安装指导。
 - **Cisco SE 的显式开关：** Responses API Tool Calling（`model.hosted_api`）、documents 模式检索、严格索引、reliable ingest、Experiment Group 与血缘标签，都只在 Domain YAML 声明时生效；其他 Domain 走原路径。`helpers/galileo_compat.py` 容忍租户返回、但 SDK 枚举中缺少的权限 action（如 `configure_rate_limit`），只影响权限解析，不改变权限本身。
+- **侧边栏导航：** 上游把默认行业同时注册为根地址和 `/<domain>` 两个可见页面，导致 Healthcare 出现两次；`ui.app_title` 开头的 emoji 又与 `icon` 重复显示。现在默认行业的命名页设为隐藏但仍可直接访问，侧边栏标题自动去掉与 `icon` 相同的开头 emoji（`app.navigation_title`），页面大标题不变。
 
 验证入口：
 

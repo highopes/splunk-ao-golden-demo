@@ -2,7 +2,7 @@
 
 2026-10-06。操作以根 [README](../README.md) 为准。**macOS / Healthcare / OpenAI / splunkse 标准路径已完成应用 UI、云端 API、Console GUI、连续排练与 Reset 重复验收，可标为 Demo-ready。** Bank 切换的 RAG / Tool / Trace / 9 样本 UI Experiment 也通过。结论限于下述实际环境；所有患者、客户、知识与攻击用例均为上游 synthetic Demo 数据。
 
-2026-10-21 新增的 Cisco SE Domain、双模型 Experiment 与 CSV 导出单独记录在 [Cisco SE Domain / Model A-B / CSV Export](#cisco-se)，逐项标注验收状态，**不沿用 Healthcare 的 Demo-ready 结论**。
+2026-10-21 新增的 Cisco SE Domain、双模型 Experiment 与 CSV 导出单独记录在 [Cisco SE Domain / Model A-B / CSV Export](#cisco-se)，逐项标注验收状态，**不沿用 Healthcare 的 Demo-ready 结论**。2026-10-22 的侧边栏导航与标题修复记录在 [侧边栏导航修复](#sidebar-nav)。
 
 ## 环境与配置
 
@@ -250,3 +250,30 @@ v1 对照（run_id `20261021T071023Z`，Dataset v1，已作废）：nano `1c14e8
 - 平台默认单价可能随租户调整；历史 Trace 的 Cost 不会重新计算。
 - UI 中的 Experiment 指标默认还勾选 Prompt Injection；与 runner 对比时需按 README 取消该项，否则 Judge 组合不一致。
 - Console GUI、UI 运行 Experiment、Controls / Chaos / Hallucination 与完整现场排练均未验收，不能标为 Demo-ready。
+
+<a id="sidebar-nav"></a>
+## 侧边栏导航修复（2026-10-22）
+
+代码版本 `232b273-dirty`（未提交），Streamlit 1.65.0。只改本地 UI 显示，不涉及云端资源、业务数据或索引。
+
+### 问题与原因
+
+- **Healthcare 在侧边栏出现两次**：`app.py` 把默认行业同时注册为根地址 `/`（`default=True`）和命名页 `/healthcare`，两页都可见。
+- **每个行业显示两个相同 emoji**：`ui.app_title` 以 emoji 开头，`st.Page(icon=...)` 又加了一次。
+- 两处都是上游缺陷：`upstream/main`（rungalileo/galileo-golden-demo）与本仓库首个提交 `1f829cf` 中已有同样代码，不是 Cisco SE 改动引入的。
+
+### 修复
+
+- 默认行业的 `/<domain>` 命名页设为 `visibility="hidden"`：不在侧边栏重复出现，但仍可通过 URL 访问，README 中的 `/healthcare` 链接继续有效。
+- 新增 `app.navigation_title()`：侧边栏标题去掉与 `icon` 相同的开头 emoji（含变体选择符 U+FE0F）；页面大标题仍使用完整 `app_title`。
+- 按用户要求统一命名格式：Healthcare `🩻 Splunk AO · Healthcare Assistant` → `🩻 Online Healthcare Assistant`（与上游原值相同）；Cisco SE `🛰️ Splunk AO · Cisco SE Advisor` → `🛰️ Online Cisco SE Advisor`。
+- Controls 的 LLM 步骤名由 Domain 名生成（如 `Healthcare Assistant`），与 `app_title` 无关，Healthcare 的三条 Control 范围不受影响。
+
+### 验证
+
+- `DEMO_TEST_POSTGRES=1 python -m unittest discover -s tests`：48 项全部通过，比上次多出的 1 项是新增的 `test_sidebar_titles_do_not_repeat_domain_icons`（runtime 15 项、Cisco SE 23 项、PostgreSQL 集成 10 项）。
+- 浏览器实测（运行中的应用刷新后生效，无需重启）：
+  - 侧边栏共 5 项，依次为 Online Bank Customer Assistant、Online Cisco SE Advisor、Online Healthcare Assistant（指向 `/`）、Online Insurance Assistant、Online Restaurant Assistant，每项只有一个图标。
+  - `/`、`/healthcare` 都渲染 `🩻 Online Healthcare Assistant`，没有 Page not found；直接打开 `/healthcare` 时侧边栏无高亮项，属预期行为。
+  - `/cisco_se` 渲染 `🛰️ Online Cisco SE Advisor`，侧边栏对应项高亮。
+- 本次没有发送 Chat、运行 Experiment 或写入任何 Trace。
