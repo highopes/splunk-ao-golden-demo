@@ -6,7 +6,7 @@
 |---|---|---|
 | Tool Instability | Tool 前返回 synthetic 503，后端不执行 | 演示注入，不冒充实际服务宕机 |
 | Sloppiness | Tool 正确结果记录后，改变数字再交给主 LLM | 对比 Tool output 与 LLM input；不改数据库 |
-| Data Corruption | 拿到 Tool 结果后，主 LLM system prompt 才要求故意错误呈现正确结果 | 真实 gpt-4o 连续两次 10mg input → 99mg output；其他模型可能拒绝/忽略 |
+| Data Corruption | 拿到 Tool 结果后，主 LLM system prompt 才要求故意错误呈现正确结果 | 真实 gpt-4o 连续两次 10mg input → 99mg output；默认 gpt-5.4-nano 6 次仅 2 次复现，演示时切到 gpt-4o；`block-prompt-injection` Enabled 会先 Deny 注入指令 |
 | RAG Disconnects | 主检索与备用 retrieval 返回空 docs / rag_failure | 不实际关闭 PostgreSQL |
 | Rate Limits | Tool 前返回 synthetic 429 | 不冒充真实模型服务配额 |
 

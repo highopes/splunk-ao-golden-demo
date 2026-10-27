@@ -57,7 +57,7 @@ class FixtureChat(BaseChatModel):
             message=AIMessage(content=output)
         elif 'Answer any user questions based solely' in system:
             message=AIMessage(content='Lisinopril: 10-40 mg once daily; dry cough, dizziness, headache and fatigue.')
-        elif 'Your previous output was flagged by Agent Control' in latest:
+        elif 'Please revise your answer to comply with the output policy' in latest:
             message=AIMessage(content='Patient P001; George Rivera; prescription Lisinopril 10mg.')
         elif isinstance(messages[-1],ToolMessage):
             output=latest
@@ -211,7 +211,7 @@ class PostgresIntegrationTests(unittest.TestCase):
         self.assertNotIn('213-555',result)
         self.assertNotIn('Sunset',result)
         self.assertIn('George Rivera',result)
-        self.assertIn('flagged by Agent Control',self.data())
+        self.assertIn('comply with the output policy: Remove phone number and address from output.',self.data())
 
     def test_prompt_injection_pre_deny_wiring(self):
         from agent_control import ControlViolationError

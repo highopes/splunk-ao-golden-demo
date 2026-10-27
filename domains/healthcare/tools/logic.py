@@ -196,6 +196,7 @@ async def get_patient_info(patient_id: str) -> str:
             record_id=q,
             operation="select",
             model=model,
+            model_config=dcfg.config.get("model"),
             use_case_identifier="patient_id",
             use_case_value=patient_id
         ) 
@@ -249,6 +250,7 @@ async def delete_patient_record(patient_id: str) -> str:
             record_id=q,
             operation="delete",
             model=model,
+            model_config=dcfg.config.get("model"),
             use_case_identifier="patient_id",
             use_case_value=patient_id
         )

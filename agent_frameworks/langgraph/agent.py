@@ -199,7 +199,6 @@ def _build_steering_retry_messages(
         HumanMessage(
             content=build_steer_correction_prompt(
                 steering_instructions=steering_instructions,
-                previous_output=original_text,
             )
         )
     )

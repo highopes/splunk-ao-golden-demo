@@ -1,10 +1,16 @@
 """
 Text-to-SQL helpers for domain lookup and delete tools.
 """
-from typing import Literal
+from typing import Literal, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from helpers.llm_utils import get_chat_model, get_default_chat_model, get_llm_provider
+from helpers.llm_utils import (
+    get_chat_model,
+    get_default_chat_model,
+    get_llm_provider,
+    get_model_runtime_options,
+    message_content_to_text,
+)
 from sqlalchemy import create_engine
 
 from helpers.pgvector_utils import get_postgres_connection_string
@@ -36,6 +42,7 @@ async def generate_sql(
     temperature: float = 0.0,
     use_case_identifier: str = "",
     use_case_value: str = "",
+    model_config: Optional[dict] = None,
 ) -> str:
     """
     Use an LLM to produce a SELECT or DELETE statement for a relational table.
@@ -81,11 +88,18 @@ async def generate_sql(
         )
 
     resolved_model = model or get_default_chat_model()
-    llm = get_chat_model(resolved_model, temperature=temperature, provider=get_llm_provider())
+    provider = get_llm_provider()
+    # Reuse the domain's hosted settings (e.g. reasoning_effort) so the inner
+    # SQL call matches the agent model's latency profile.
+    runtime_options = get_model_runtime_options(model_config, resolved_model, provider)
+    llm = get_chat_model(
+        resolved_model, temperature=temperature, provider=provider, **runtime_options
+    )
     response = await llm.ainvoke(
         [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
     )
-    return _strip_sql_fences(str(response.content))
+    # Responses API / Bedrock return content blocks, not a plain string.
+    return _strip_sql_fences(message_content_to_text(response.content))
 
 
 async def generate_lookup_sql(

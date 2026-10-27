@@ -85,7 +85,12 @@ def main():
             except Exception as exc:
                 check("Strict index metadata", False, str(exc))
     except Exception as exc:
-        check("Database / domain data", False, type(exc).__name__ + "; start DB and load domain data")
+        name = type(exc).__name__
+        hint = {
+            "OperationalError": "database unreachable; run scripts/db.py start (scripts/start-demo.sh does this automatically)",
+            "ProgrammingError": f"tables/index missing; run helpers/setup_vectordb.py {args.domain}",
+        }.get(name, "start DB and load domain data")
+        check("Database / domain data", False, f"{name}; {hint}")
     try:
         with socket.create_connection(("127.0.0.1", 8501), timeout=2):
             check("Streamlit :8501", True)

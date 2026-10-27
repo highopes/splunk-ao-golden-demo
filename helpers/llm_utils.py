@@ -15,7 +15,7 @@ from langchain_ollama import ChatOllama, OllamaEmbeddings
 LLMProvider = Literal["local", "hosted", "bedrock"]
 
 DEFAULT_LOCAL_CHAT_MODEL = "gemma4"
-DEFAULT_HOSTED_CHAT_MODEL = "gpt-4o"
+DEFAULT_HOSTED_CHAT_MODEL = "gpt-5.4-nano"
 DEFAULT_BEDROCK_CHAT_MODEL = "mistral.ministral-3-14b-instruct"
 DEFAULT_LOCAL_EMBEDDING_MODEL = "nomic-embed-text"
 DEFAULT_HOSTED_EMBEDDING_MODEL = "text-embedding-3-large"

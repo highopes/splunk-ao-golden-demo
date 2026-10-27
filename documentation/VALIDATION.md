@@ -2,7 +2,7 @@
 
 2026-10-06。操作以根 [README](../README.md) 为准。**macOS / Healthcare / OpenAI / splunkse 标准路径已完成应用 UI、云端 API、Console GUI、连续排练与 Reset 重复验收，可标为 Demo-ready。** Bank 切换的 RAG / Tool / Trace / 9 样本 UI Experiment 也通过。结论限于下述实际环境；所有患者、客户、知识与攻击用例均为上游 synthetic Demo 数据。
 
-2026-10-21 新增的 Cisco SE Domain、双模型 Experiment 与 CSV 导出单独记录在 [Cisco SE Domain / Model A-B / CSV Export](#cisco-se)，逐项标注验收状态，**不沿用 Healthcare 的 Demo-ready 结论**。2026-10-22 的侧边栏导航与标题修复记录在 [侧边栏导航修复](#sidebar-nav)。
+2026-10-21 新增的 Cisco SE Domain、双模型 Experiment 与 CSV 导出单独记录在 [Cisco SE Domain / Model A-B / CSV Export](#cisco-se)，逐项标注验收状态，**不沿用 Healthcare 的 Demo-ready 结论**。2026-10-22 的侧边栏导航与标题修复记录在 [侧边栏导航修复](#sidebar-nav)。2026-10-27 的数据库未启动排障与 `start-demo.sh` 自动检查记录在 [数据库启动检查](#db-autostart)。
 
 ## 环境与配置
 
@@ -98,6 +98,38 @@ Reset 后新 Session `e58392ff-de1e-451a-bb4c-3545f3acb571` 的 RAG `e65cc827-4f
 ## 故障修复与证据保护
 
 实际联调修复了旧 Control proxy 路由、错误 connected 状态、RunnableConfig 的 AsyncCallbackManager 远程序列化、跨 asyncio.run 的 OpenAI async HTTP 连接池、Control 缓存刷新及 Experiment 默认 scorer 不存在的问题。早期失败 Trace 保留在自己的 stream，不删除、不冒充成功。
+
+**PII Steer 每次失败（2026-10-27）。** Trace `3bb7af2a-b39b-4386-8bae-4bb684668542`、`4682476f-2b65-4732-960b-9789894cf464` 中，修正后的回答已经去掉 phone/address，但 Luna 仍返回 `['name']`。原因是 `any` 操作符只判断是否检出任何 PII，会忽略 threshold `phone_number, address`。10-06 通过时 scorer 对 name 返回 `[]`，Control 本身没有改动。
+
+修复后，`splunk-ao-golden-demo-block-output-pii` 的条件改为 `or[contains phone_number, contains address]`，其余 scope、action、steering 不变。同时排查出第二个问题：Injection Enabled 时，旧的重试提示（“follow these exactly…”）PRE 分数为 0.998，会被 Deny（`c900ee90-d2a0-419f-87ea-340b3950d701`）。因此 `build_steer_correction_prompt` 改为普通单行请求。
+
+验证方式为真实 Control、Luna、PG 和 Galileo，LLM 回放上述 GPT-4o 输出：
+- Injection Disabled（`f0b73a54-bfe0-4c3c-958f-5f34578452fa`）和 Enabled（`55816441-f389-4476-ae3a-b42a1a12f3d0`）均为一次 Steer 后复检 `['name']` 未命中，最终保留 name，不含 phone/address。
+- 重试 Injection 分数为 0.119。
+
+因 OpenAI 额度耗尽（429），修复当时只用回放验证。充值后补测真实 GPT-4o，Injection Enabled、PII 临时 Enabled，2/2 通过（`037a9939-0d9f-4397-98fd-bdce37e26309`、`4a97ec95-7fa9-483d-8cf3-c107dbb0c666`）。测试后 PII 已恢复 Disabled，Injection 保持测试前的 Enabled。
+
+**默认 Hosted 模型改为 `gpt-5.4-nano`（2026-10-27）。** 四个通用行业默认使用 `reasoning_effort: none`；`gpt-4o` 留在下拉列表中。同时修复两处内层 Text-to-SQL 问题：原先不带 domain 的 reasoning effort，且使用 `str(response.content)` 取结果，Responses API 模型会因此生成无效 SQL（实测 `gpt-6-luna`）。
+
+选型：用同一 system prompt 和 tools 直测模型，不含 Control，取中位数，分别为工具调用、最终回答和 SQL 三步合计。
+- `gpt-5.4-nano`/none：3.79s
+- `gpt-4o`：3.64s
+- `gpt-5.6-luna`/none：4.17s
+- `gpt-5-nano`/minimal：4.50s
+- `gpt-6-luna`/none：10.45s
+- `gpt-4.1-nano` 已下线（404）
+
+端到端 P001 查询 `gpt-5.4-nano` 为 10.1–18.8s，`gpt-4o` 为 10.5–18.6s，主要耗时在 Control 和 Luna。
+
+真实 GPT 与真实 Control、Luna、PG、Galileo，PII 临时 Enabled，共 6/6 通过：
+- Injection Enabled：`247fa18f-8177-4602-b215-194fed97e562`、`caa3f5ae-431b-4db6-99e4-542e45aaebd9`、`b5fa5c5b-c75e-412a-89e7-608cbaaad216`
+- Injection Disabled：`392998de-28b2-4192-b463-db0becdc7f75`、`25d672b7-54c0-4b1f-b99b-722294bc3bb8`、`b95462cb-a597-4008-ae79-2c077e5b2eab`
+
+每次都是一次 Steer 后复检未命中，最终回答保留 name，不含 phone/address；重试的 Injection 分数为 0.13。
+
+Data Corruption 在 `gpt-5.4-nano` 上 6 次仅 2 次出现 99mg（`1ef8314d-09a5-47bb-9369-789c6e94e624`、`1489236b-0914-4e50-97e7-d8b72e87a0f8`），演示时切到 `gpt-4o`。Injection Enabled 时，注入指令会先被 Deny（`fdc57a7e-0a13-49e0-8448-72028e60c902`，0.994）。
+
+测试后 PII 已恢复 Disabled，Injection 已恢复 Enabled。另外，`check_evaluation` 发现 `block-harmful-sql` 当时对 healthcare stream 未生效（DELETE 探测 `is_safe=True`）。经用户同意，已用 `upsert_control_binding_by_key` 启用；复测 DELETE PRE 为 Deny，SELECT 放行。新默认模型下的 Experiment 基线尚未重跑。
 
 完整执行日志、Trace API readback 只保存在忽略目录 .runtime。Key / 密码只在忽略的 .streamlit/secrets.toml；文档不保存认证头值或其他项目数据。一次诊断误输出了被填到“HTTP 头名称”字段中的真实 Key，已告知用户验收后轮换该 Key；此后不再输出 secrets 字段值。blocked_by_local_safety 与 blocked_by_agent_control 分别判定，没有以重建数据代替 DELETE 阻断验收。
 
@@ -277,3 +309,41 @@ v1 对照（run_id `20261021T071023Z`，Dataset v1，已作废）：nano `1c14e8
   - `/`、`/healthcare` 都渲染 `🩻 Online Healthcare Assistant`，没有 Page not found；直接打开 `/healthcare` 时侧边栏无高亮项，属预期行为。
   - `/cisco_se` 渲染 `🛰️ Online Cisco SE Advisor`，侧边栏对应项高亮。
 - 本次没有发送 Chat、运行 Experiment 或写入任何 Trace。
+
+<a id="db-autostart"></a>
+## 数据库未启动导致 Healthcare 异常 / 启动前自动检查（2026-10-27）
+
+代码版本 `a83f871-dirty`（未提交）。macOS / PostgreSQL 17.11 / pgvector 0.8.7 / OpenAI Hosted。
+
+### 问题与原因
+
+- **现象**：Healthcare 页面能打开，但药物 RAG 与患者查询失败。5 个 Domain 的 `check-demo.sh --domain <domain>` 都报 `Database / domain data: OperationalError`，所以不只是 Healthcare 的问题。
+- **根因**：`.runtime/postgres.log` 显示 2026-10-26 20:59 正常关闭（smart shutdown），之后项目数据库没有再启动，`postmaster.pid` 是残留文件。`start-demo.sh` 原本不检查数据库，Streamlit 照常启动，RAG 与 SQL 只在请求时才失败。最近两次提交（Cisco SE Domain、侧边栏修复）对共享代码的改动向后兼容，不是原因。
+- **另一个独立问题**：数据库启动后，Healthcare、Bank、Cisco SE 的预检全部通过；Insurance、Restaurant 报 `ProgrammingError`，原因是这两个行业的表和索引此前从未加载（README 一直将它们标为未验收）。
+
+### 修复
+
+- `scripts/db.py check`：按 secrets 的 postgres 配置（默认值与 App 一致）真实连接并执行 `SELECT 1`，`connect_timeout=3`，可达返回 0，否则返回 1。只输出 host:port、库名与错误首行，不输出密码。不需要 Homebrew PG，Docker 数据库也能用。
+- `scripts/start-demo.sh`：启动 Streamlit 前先执行 `check`。不通且 `.runtime/postgres/PG_VERSION` 存在时，自动执行 `db.py start` 并复检；仍失败则退出（exit 1），不启动 App。原生集群未初始化时不自动 initdb，因为空库没有数据，还可能与 Docker 争用 5432；此时退出并给出首次安装和 Docker 指引。
+- `scripts/check_demo.py`：`OperationalError` 提示启动数据库，`ProgrammingError` 提示执行 `setup_vectordb.py <domain>`。
+- 运行环境：执行 `db.py start`（自动处理残留 pid）；执行 `setup_vectordb.py insurance` 与 `restaurant`，只构建 Hosted 索引：Insurance 9 QA / 30 customers，Restaurant 19 QA / 40 schedule rows。
+
+### 验证
+
+- `DEMO_TEST_POSTGRES=1 python -m unittest discover -s tests`：49 项全部通过（runtime 16、Cisco SE 23、PostgreSQL 集成 10）。新增 `test_db_check_reports_closed_port_without_secrets`。
+- 端到端（`--server.port 8599`，避开运行中的 8501）：
+  - `db.py stop` 后运行 `start-demo.sh`：check 失败 → 自动 start → 复检通过 → App HTTP 200，随后 Healthcare 预检 PASS。
+  - 数据库已运行时：只输出 `PostgreSQL reachable ...`，直接启动 App。
+  - 临时目录中没有初始化的集群、端口关闭时：输出指引并 exit 1，不执行 initdb。
+- 5 个 Domain 本地预检（无 `--live`）全部 PASS。
+- UI 冒烟（每个行业一到两问，未在 Console GUI 复核）：
+
+| Domain | 问题 | 结果 |
+|---|---|---|
+| Healthcare | Lisinopril 剂量与副作用；P001 / P002 | RAG 10–40 mg；P002 为 Theresa Greenleaf、Metformin 500mg。新会话首问约 60 秒（Logger / Control 注册 / Agent 创建冷启动），之后约 12 秒 |
+| Insurance | `Show me data for customer C001.` | 返回客户数据，约 10 秒 |
+| Restaurant | 厨房关店清单（RAG） | 返回清单，约 18 秒 |
+| Bank | C001 账户查询 | 返回客户数据，约 18 秒 |
+| Cisco SE | N9332D-H2R 的 400G 端口与高度 | 32×400G QSFP-DD、1RU，带来源，约 19 秒 |
+
+- 上述冒烟与一条计时诊断（session `Healthcare timing diag`）向各行业 stream 写入了真实 Trace。Insurance / Restaurant 只做了单问冒烟，评分、Control 与 Experiment **仍未验收**，不能标为 Demo-ready。

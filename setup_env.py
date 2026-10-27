@@ -123,7 +123,7 @@ def setup_environment(domain_name: Optional[str] = None, domain_config: Optional
             ),
             "OPENAI_API_KEY": secrets.get("openai_api_key", ""),
             "OPENAI_DEFAULT_CHAT_MODEL": secrets.get(
-                "openai_default_chat_model", "gpt-4o"
+                "openai_default_chat_model", "gpt-5.4-nano"
             ),
             "OPENAI_EMBEDDING_MODEL": secrets.get(
                 "openai_embedding_model", "text-embedding-3-large"

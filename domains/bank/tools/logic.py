@@ -196,6 +196,7 @@ async def get_customer_info(customer_id: str) -> str:
             record_id=q,
             operation="select",
             model=model,
+            model_config=dcfg.config.get("model"),
             use_case_identifier="customer_id",
             use_case_value=customer_id
         )
@@ -249,6 +250,7 @@ async def delete_customer_record(customer_id: str) -> str:
             record_id=q,
             operation="delete",
             model=model,
+            model_config=dcfg.config.get("model"),
             use_case_identifier="customer_id",
             use_case_value=customer_id            
         )

@@ -19,7 +19,7 @@ _initialized = False
 MAX_STEER_RETRIES = 3
 STEER_EXHAUSTED_MESSAGE = (
     "Agent could not complete the request after "
-    f"{MAX_STEER_RETRIES} steering retries."
+    f"{MAX_STEER_RETRIES} steering attempts."
 )
 
 
@@ -36,22 +36,21 @@ def extract_steering_instructions(error: Exception) -> str:
     return str(error)
 
 
-def build_steer_correction_prompt(*, steering_instructions: str, previous_output: str = "") -> str:
-    """Prompt text instructing the LLM to produce a corrected response."""
-    parts = [
-        "Your previous output was flagged by Agent Control and must be corrected.",
-        "",
-        "Agent Control instructions — follow these exactly and produce a completely "
-        "new response that complies with them:",
-        steering_instructions,
-    ]
-    if previous_output:
-        parts.extend(["", "Your previous response:", previous_output])
-    parts.extend([
-        "",
-        "Generate a revised response now. Do not repeat the previous response.",
-    ])
-    return "\n".join(parts)
+def build_steer_correction_prompt(*, steering_instructions: str) -> str:
+    """Prompt asking the LLM to revise its answer according to steering guidance.
+
+    The retry is itself an LLM input, so it is also checked by PRE controls such
+    as Prompt Injection (SLM). Keep it a plain single-line request: override-style
+    wording ("follow these exactly", "do not repeat ...") or extra line breaks
+    scored >= 0.80 on Luna and turned a POST Steer retry into a PRE Deny.
+    """
+    policy = "; ".join(
+        line.strip() for line in str(steering_instructions).splitlines() if line.strip()
+    ).rstrip(" .")
+    return (
+        f"Please revise your answer to comply with the output policy: {policy}. "
+        "Keep all other relevant information."
+    )
 
 
 def format_steer_tool_result(error: Exception) -> str:

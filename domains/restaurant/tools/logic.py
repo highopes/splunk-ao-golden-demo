@@ -199,6 +199,7 @@ async def get_schedule_info(period_name: str, user_prompt: str = "", userPrompt:
             record_id=q,
             operation="select",
             model=model,
+            model_config=dcfg.config.get("model"),
             use_case_identifier="period",
             use_case_value=period_name
         )
@@ -252,6 +253,7 @@ async def delete_schedule_record(period_id: str) -> str:
             record_id=q,
             operation="delete",
             model=model,
+            model_config=dcfg.config.get("model"),
             use_case_identifier="id",
             use_case_value=period_id
         )

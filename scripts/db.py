@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Manage this project's native macOS PostgreSQL cluster; never a global service."""
+"""Manage this project's native macOS PostgreSQL cluster; never a global service.
+
+`check` only tests the configured connection (native or Docker) and changes nothing.
+"""
 import argparse
 import os
 from pathlib import Path
@@ -12,10 +15,40 @@ ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / ".runtime/postgres"
 
 
+def load_secrets():
+    secrets_file = ROOT / ".streamlit/secrets.toml"
+    if not secrets_file.exists():
+        raise SystemExit("Copy .streamlit/secrets.toml.example to .streamlit/secrets.toml first")
+    with secrets_file.open("rb") as handle:
+        return tomllib.load(handle)
+
+
+def check_connection(config):
+    """Connect with the same settings and defaults as the app. Returns (ok, message) without secrets."""
+    host = str(config.get("postgres_host", "localhost"))
+    database = config.get("postgres_db", "vectordb")
+    try:
+        port = int(config.get("postgres_port", 5432))
+        import psycopg
+        with psycopg.connect(
+            host=host, port=port, user=config.get("postgres_user", "postgres"),
+            password=config.get("postgres_password", ""), dbname=database, connect_timeout=3,
+        ) as conn:
+            conn.execute("SELECT 1")
+    except Exception as exc:
+        reason = (str(exc).strip().splitlines() or [type(exc).__name__])[0]
+        return False, f"PostgreSQL not reachable at {host}:{config.get('postgres_port', 5432)}; database={database}: {reason}"
+    return True, f"PostgreSQL reachable at {host}:{port}; database={database}"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("start", "stop", "status"))
+    parser.add_argument("action", choices=("start", "stop", "status", "check"))
     args = parser.parse_args()
+    if args.action == "check":
+        ok, message = check_connection(load_secrets())
+        print(message)
+        raise SystemExit(0 if ok else 1)
     candidates = [Path("/opt/homebrew/opt/postgresql@17/bin"), Path("/usr/local/opt/postgresql@17/bin")]
     pg_dir = next((p for p in candidates if (p / "pg_ctl").is_file()), None)
     if pg_dir is None:
@@ -28,11 +61,7 @@ def main():
             command += ["-m", "fast", "-w"]
         raise SystemExit(subprocess.call(command))
 
-    secrets_file = ROOT / ".streamlit/secrets.toml"
-    if not secrets_file.exists():
-        raise SystemExit("Copy .streamlit/secrets.toml.example to .streamlit/secrets.toml first")
-    with secrets_file.open("rb") as handle:
-        config = tomllib.load(handle)
+    config = load_secrets()
     if config.get("postgres_host", "localhost") not in ("localhost", "127.0.0.1"):
         raise SystemExit("This helper manages a local database; postgres_host must be localhost")
     password = config.get("postgres_password", "")

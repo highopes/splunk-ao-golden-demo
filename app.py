@@ -70,7 +70,7 @@ def reset_demo_session():
 def _models_for_provider(domain_info: dict, provider: str) -> tuple[list[str], str]:
     """Return model options and default for the selected provider."""
     if provider == "hosted":
-        models = domain_info.get("hosted_models") or ["gpt-4o"]
+        models = domain_info.get("hosted_models") or ["gpt-5.4-nano"]
         default = domain_info.get("hosted_default_model") or models[0]
     elif provider == "bedrock":
         models = domain_info.get("bedrock_models") or ["mistral.ministral-3-14b-instruct", "mistral.ministral-3-8b-instruct"]

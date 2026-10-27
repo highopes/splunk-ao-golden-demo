@@ -17,3 +17,5 @@ Reset 复测发现仅 clear Session 会让 Streamlit 回填旧 Chaos checkbox �
 三个本 Demo Controls 当前 SQL Enabled、PII / Injection Disabled；只关联 Healthcare 自有 stream。不要改其他项目/共享原规则。失败 Trace/run 保留，不删除或冒充成功。Bank Guardrails、Insurance/Restaurant、Docker/Ollama/Bedrock 未验收。Data Corruption 两次真实输出错误已验证，但仍受模型遵循影响，保持 Optional。
 
 Demo-ready 仅限已验证的 macOS / Healthcare / OpenAI / splunkse 路径。Kubernetes、Qwen Judge、cisco-demo 只预留文档，不扩大当前架构/UI。真实 secrets/.venv/数据库/Trace readback 留在忽略目录；公开文件已按真实 credential 字节扫描，无 Key / 密码。Console 截图因含账号信息不作为公开交付；只保留 synthetic 应用截图。
+
+2026-10-27：Healthcare 异常的根因是重启后项目 PG 未启动（10-26 20:59 正常关闭，残留 postmaster.pid），而 start-demo.sh 不检查数据库，5 个 Domain 都受影响。新增 `db.py check`（只测连接，不输出密码，Docker 也能用）；start-demo.sh 不通时，若 `.runtime/postgres` 已初始化就自动执行 `db.py start` 并复检，失败则不启动 App；未初始化时不自动 initdb，只给出指引。check_demo 按 OperationalError / ProgrammingError 分别提示。Insurance / Restaurant 表与 Hosted 索引此前从未加载，本次已加载，只做了单问 UI 冒烟，仍未验收。49 项测试通过；README 3.2/3.4/3.6/4.4/5.8/6.5/7、VALIDATION（#db-autostart）、UPSTREAM 已同步。未提交。

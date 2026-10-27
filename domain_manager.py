@@ -109,10 +109,10 @@ class DomainManager:
         additional = model_cfg.get("additional_models") or []
         local_models = [default_model] + [m for m in additional if m != default_model]
 
-        hosted_default = model_cfg.get("hosted_default_model") or "gpt-4o"
+        hosted_default = model_cfg.get("hosted_default_model") or "gpt-5.4-nano"
         hosted_additional = model_cfg.get("hosted_additional_models") or [
+            "gpt-4o",
             "gpt-4o-mini",
-            "gpt-4.1",
         ]
         hosted_models = [hosted_default] + [
             m for m in hosted_additional if m != hosted_default

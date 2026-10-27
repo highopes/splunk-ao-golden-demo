@@ -90,13 +90,44 @@ class CiscoSeDomainContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_reasoning_effort("gpt-6.1-sol", "none")
 
-    def test_healthcare_runtime_and_ingest_are_unchanged(self):
+    def test_healthcare_fast_default_runtime_and_ingest(self):
         healthcare = DomainManager().load_domain_config("healthcare").config
         model = healthcare["model"].get("hosted_default_model")
-        self.assertEqual(get_model_runtime_options(healthcare["model"], model, "hosted"), {})
+        self.assertEqual(model, "gpt-5.4-nano")
+        self.assertEqual(
+            get_model_runtime_options(healthcare["model"], model, "hosted"),
+            {"reasoning_effort": "none"},
+        )
+        # gpt-4o stays selectable on the legacy Chat Completions + temperature path.
+        self.assertIn("gpt-4o", healthcare["model"]["hosted_additional_models"])
+        self.assertEqual(get_model_runtime_options(healthcare["model"], "gpt-4o", "hosted"), {})
         self.assertFalse(galileo_ingest.reliable_ingest_requested(healthcare))
         self.assertFalse(galileo_ingest.apply_domain_reliable_ingest(healthcare, "healthcare-project-id"))
         self.assertFalse(galileo_ingest.is_reliable_ingest_enabled("healthcare-project-id"))
+
+
+class TextToSqlRuntimeTests(unittest.TestCase):
+    def test_sql_call_uses_domain_effort_and_flattens_content_blocks(self):
+        from helpers import text_to_sql_utils
+
+        fake_llm = MagicMock()
+
+        async def ainvoke(_messages):
+            return MagicMock(content=[{"type": "text", "text": "```sql\nSELECT * FROM t;\n```"}])
+
+        fake_llm.ainvoke = ainvoke
+        model_cfg = {"reasoning_effort": {"gpt-5.4-nano": "none"}}
+        with patch.object(text_to_sql_utils, "create_engine"), \
+             patch.object(text_to_sql_utils, "get_postgres_connection_string", return_value="x"), \
+             patch.object(text_to_sql_utils, "get_table_schema_description", return_value="schema"), \
+             patch.object(text_to_sql_utils, "get_llm_provider", return_value="hosted"), \
+             patch.object(text_to_sql_utils, "get_chat_model", return_value=fake_llm) as factory:
+            sql = asyncio.run(text_to_sql_utils.generate_sql(
+                domain_name="healthcare", table_suffix="patients", id_column="patient_id",
+                record_id="P001", model="gpt-5.4-nano", model_config=model_cfg,
+            ))
+        self.assertEqual(sql, "SELECT * FROM t")
+        self.assertEqual(factory.call_args.kwargs.get("reasoning_effort"), "none")
 
 
 class _FakeIngestRequest(BaseModel):

@@ -178,4 +178,17 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(navigation_title('Telco Online Assistant','📡'),'Telco Online Assistant')
         self.assertEqual(navigation_title('🩻','🩻'),'🩻')
 
+    def test_db_check_reports_closed_port_without_secrets(self):
+        import importlib.util, socket
+        spec=importlib.util.spec_from_file_location('demo_db',Path(__file__).resolve().parents[1]/'scripts/db.py')
+        db=importlib.util.module_from_spec(spec); spec.loader.exec_module(db)
+        with socket.socket() as s:
+            s.bind(('127.0.0.1',0)); port=s.getsockname()[1]
+        ok,msg=db.check_connection({'postgres_host':'127.0.0.1','postgres_port':str(port),'postgres_password':'s3cret-Test!'})
+        self.assertFalse(ok)
+        self.assertIn(f'127.0.0.1:{port}',msg)
+        self.assertNotIn('s3cret-Test!',msg)
+        ok,msg=db.check_connection({'postgres_port':'not-a-port'})
+        self.assertFalse(ok)
+
 if __name__=='__main__': unittest.main()
