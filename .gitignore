@@ -2,6 +2,7 @@
 .env.*
 !.env.example
 *.log
+.agent-context/
 
 # Upstream exclusions
 # Byte-compiled / optimized / DLL files
