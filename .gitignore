@@ -16,7 +16,8 @@ dist/
 
 # Virtual environments
 venv/
-.venv/
+# .venv is a symlink to the real environment outside OneDrive
+.venv
 env/
 
 # Chroma vector DB files (should not be committed)

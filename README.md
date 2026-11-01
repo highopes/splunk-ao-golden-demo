@@ -180,10 +180,13 @@ uv pip check --python .venv/bin/python
 
 脚本用 `requirements.uv-snapshot.txt` 同步完整 186 包环境，包含当时已安装的可选包。它不会下载 Python，也不会升级版本；发现 `.venv` 的 Python 不是 3.12.14 就退出。重复同步会移除快照之外的包，因此仅在本项目专用环境中执行。
 
+**虚拟环境不放在项目目录内。** 本仓库位于 OneDrive，而 OneDrive 不接受 `.lock` 等文件名，也不适合同步约 1 GB、3 万多个包文件。因此脚本把真实环境建在 `~/.venvs/splunk-ao-golden-demo`（可用 `SPLUNK_AO_VENV_DIR` 改路径），项目中的 `.venv` 只是指向它的符号链接，所有 `.venv/bin/python`、`source .venv/bin/activate` 命令照常可用。项目内若已有真实 `.venv` 目录，脚本会拒绝执行。环境不随 OneDrive 备份；换机器时重新执行本步骤即可，版本由快照文件保证。
+
 **方式 B：从项目依赖集合安装。** 如果 Homebrew 提供的 3.12 补丁版本与快照不同，或使用 Intel Mac，且你接受完成独立验证，使用下面的流程。命令适用于尚未创建 `.venv` 的新目录：
 
 ```bash
-uv venv --python "$(brew --prefix python@3.12)/bin/python3.12" --no-python-downloads .venv
+uv venv --python "$(brew --prefix python@3.12)/bin/python3.12" --no-python-downloads ~/.venvs/splunk-ao-golden-demo
+ln -s ~/.venvs/splunk-ao-golden-demo .venv
 uv pip install --python .venv/bin/python -r requirements.txt
 source .venv/bin/activate
 uv pip check --python .venv/bin/python
@@ -191,7 +194,7 @@ uv pip check --python .venv/bin/python
 
 `requirements.txt` 受 `requirements.lock.txt` 约束。这个集合可能小于完整快照；依赖安装成功后，仍要完成[首次启用](#enable)、[预检与演示排练](#pre-demo)。不要把非 3.12.14 / 非 arm64 的环境称为已复现原验收环境。已有 `.venv` 时先检查 `.venv/bin/python --version`，不要直接覆盖。
 
-传统 pip 安装仍可使用，但应在独立 `.venv` 中安装相同的 `requirements.txt`。Apple Silicon 的 Homebrew Python 通常在 `/opt/homebrew/opt/python@3.12/bin/python3.12`，Intel 通常在 `/usr/local/opt/python@3.12/bin/python3.12`；上面的命令通过 `brew --prefix` 自动选择路径。
+传统 pip 安装仍可使用，但应在 OneDrive 外的独立环境中安装相同的 `requirements.txt`，并同样用 `.venv` 符号链接指向它。Apple Silicon 的 Homebrew Python 通常在 `/opt/homebrew/opt/python@3.12/bin/python3.12`，Intel 通常在 `/usr/local/opt/python@3.12/bin/python3.12`；上面的命令通过 `brew --prefix` 自动选择路径。
 
 uv 默认缓存位于 OneDrive 外的 `~/.cache/uv`，`uv.toml` 使用硬链接复用包文件。不要直接改 `site-packages` 中的文件。需要包文件写入隔离时，可在独立环境安装时指定 `--link-mode clone`；仅修改设置不会转换已有硬链接。原环境审计与迁移记录另存于当时工作区父目录的 `uv-readme.md`、`python-env-audit.md` 和 `python-env-migration-report.md`，它们不是从零安装的前提。
 
