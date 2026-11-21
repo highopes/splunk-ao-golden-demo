@@ -1,0 +1,126 @@
+{{- if and .Values.ingress.enabled .Values.ingress.basicAuth.enabled }}
+{{- $fullname := include "golden.fullname" . -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullname }}-auth
+  labels:
+    {{- include "golden.labels" . | nindent 4 }}
+    app.kubernetes.io/component: auth
+data:
+  nginx.conf: |
+    worker_processes 1;
+    pid /tmp/nginx.pid;
+    error_log /dev/stderr warn;
+    events { worker_connections 256; }
+    http {
+      access_log off;
+      server_tokens off;
+      client_body_temp_path /tmp/client_temp;
+      proxy_temp_path /tmp/proxy_temp;
+      fastcgi_temp_path /tmp/fastcgi_temp;
+      uwsgi_temp_path /tmp/uwsgi_temp;
+      scgi_temp_path /tmp/scgi_temp;
+      server {
+        listen {{ .Values.authProxy.port }};
+        location = /healthz { return 200 "ok\n"; }
+        # ingress-nginx sends every request of the app host here first (auth-url);
+        # nginx returns the 401 WWW-Authenticate challenge to the browser.
+        location / {
+          auth_basic {{ .Values.ingress.basicAuth.realm | quote }};
+          auth_basic_user_file /etc/basic-auth/auth;
+          return 204;
+        }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-auth
+  labels:
+    {{- include "golden.labels" . | nindent 4 }}
+    app.kubernetes.io/component: auth
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "golden.selector" . | nindent 6 }}
+      app.kubernetes.io/component: auth
+  template:
+    metadata:
+      labels:
+        {{- include "golden.selector" . | nindent 8 }}
+        app.kubernetes.io/component: auth
+      annotations:
+        splunk-ao-golden-demo/config-checksum: {{ .Values.app.configChecksum | quote }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: auth
+          image: "{{ .Values.authProxy.image.repository }}:{{ .Values.authProxy.image.tag }}{{ with .Values.authProxy.image.digest }}@{{ . }}{{ end }}"
+          imagePullPolicy: {{ .Values.authProxy.image.pullPolicy }}
+          # Skip the image entrypoint scripts: they edit /etc/nginx, which is read-only here.
+          command: ["nginx", "-g", "daemon off;"]
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.authProxy.port }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.authProxy.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+              readOnly: true
+            - name: basic-auth
+              mountPath: /etc/basic-auth
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $fullname }}-auth
+        - name: basic-auth
+          secret:
+            secretName: {{ include "golden.basicAuthSecret" . }}
+            defaultMode: 0440
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-auth
+  labels:
+    {{- include "golden.labels" . | nindent 4 }}
+    app.kubernetes.io/component: auth
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "golden.selector" . | nindent 4 }}
+    app.kubernetes.io/component: auth
+  ports:
+    - name: http
+      port: {{ .Values.authProxy.port }}
+      targetPort: http
+{{- end }}

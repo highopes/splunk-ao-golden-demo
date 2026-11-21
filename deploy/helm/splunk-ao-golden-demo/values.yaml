@@ -59,14 +59,37 @@ ingress:
   host: ""
   # TLS Secret; default <release>-tls.
   tlsSecretName: ""
+  # Basic Auth is enforced by this release's own auth service (authProxy below)
+  # through the "auth-url" external-auth annotation. The shared ingress-nginx
+  # controller runs with a read-only root file system, so "auth-type: basic"
+  # (which writes an htpasswd file inside the controller) cannot be used, and
+  # the controller is not changed for this app.
   basicAuth:
     enabled: true
-    # htpasswd Secret (key "auth"); default <release>-basic-auth.
+    # htpasswd Secret (key "auth", apr1 hashes); default <release>-basic-auth.
     secretName: ""
     realm: "Splunk AO Golden Demo"
   # Streamlit keeps one WebSocket per browser session; long answers must not time out.
   proxyTimeoutSeconds: 3600
   annotations: {}
+
+# Small nginx that answers ingress-nginx external-auth subrequests: 204 for a
+# valid Basic Auth header, 401 + WWW-Authenticate otherwise (the browser shows
+# its login prompt). Rendered when ingress.basicAuth.enabled is true.
+authProxy:
+  image:
+    repository: nginxinc/nginx-unprivileged
+    tag: 1.30.6-alpine
+    digest: sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03
+    pullPolicy: IfNotPresent
+  port: 8080
+  resources:
+    requests:
+      cpu: 10m
+      memory: 16Mi
+    limits:
+      cpu: 200m
+      memory: 64Mi
 
 postgres:
   enabled: true
