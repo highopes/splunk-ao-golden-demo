@@ -12,6 +12,7 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     UV_LINK_MODE=copy \
+    UV_CACHE_DIR=/tmp/.uv-cache \
     UV_PYTHON_DOWNLOADS=never \
     VIRTUAL_ENV=/opt/venv \
     PATH=/opt/venv/bin:$PATH \
@@ -35,7 +36,8 @@ WORKDIR /app
 COPY requirements.txt requirements.lock.txt ./
 RUN uv venv --python /usr/local/bin/python3 "$VIRTUAL_ENV" \
  && uv pip install --python "$VIRTUAL_ENV/bin/python" --no-cache -r requirements.txt \
- && uv pip check --python "$VIRTUAL_ENV/bin/python"
+ && uv pip check --python "$VIRTUAL_ENV/bin/python" \
+ && rm -rf /tmp/.uv-cache /home/app/.cache
 
 COPY . .
 
