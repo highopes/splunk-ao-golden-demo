@@ -20,9 +20,9 @@
 
 | 项 | 状态 |
 | --- | --- |
-| 阶段 | 0、1、2 完成；3 进行中 |
-| 本仓库 HEAD（GitHub / Mac / `<OPS_NODE>` / `<BUILD_HOST>`） | `caa8953`（C1，四处一致） |
-| 镜像 | 未构建 |
+| 阶段 | 0–3 完成；5 进行中 |
+| 本仓库 HEAD（GitHub / Mac / `<OPS_NODE>` / `<BUILD_HOST>`） | `03a0a1f`（四处一致） |
+| 镜像 | `highope/sao-golden:1.0.0-03a0a1f`（`sha256:3536d717…e19f`，Public） |
 | 命名空间 `sao-golden` | 未创建 |
 | 未决事项 | Healthcare 15 样本 Experiment 在阶段 6 集群内验收（Mac 公网上行过慢） |
 
@@ -124,3 +124,27 @@
 - `.runtime/postgres` 中 81 个 PG 数据文件被 OneDrive 驱逐为 dataless（Mac 既有布局，本次未改动）。
 
 **C1b 改动**：`agent_frameworks/langgraph/agent.py`（方案 A）、`scripts/setup_demo_controls.py`（新）、`scripts/check_demo.py`（探测重试）、`setup_env.py`（错误诊断信息）、`tests/test_onprem_k8s.py`（+1：LLM Control 输入为最新用户消息）。
+
+### 2026-11-21 阶段 3：镜像构建与推送（执行者：Mac 上的 GitHub Copilot，经 JumpServer 在 `<BUILD_HOST>` 操作；22:33 开始，22:55 完成）
+
+```bash
+# <BUILD_HOST>，tmux 会话 sao-golden-build / sao-golden-push
+cd /root/<BUILD_WORKDIR> && git pull --ff-only
+bash deploy/k8s/build/build-image.sh all  highope/sao-golden   # build + smoke + scan
+bash deploy/k8s/build/build-image.sh push highope/sao-golden
+```
+
+| 项 | 结果 |
+| --- | --- |
+| 镜像 | `highope/sao-golden:1.0.0-03a0a1f`（linux/amd64，用户 10001:10001，标签 `org.opencontainers.image.title=sao-golden`，264 MB） |
+| digest | `sha256:3536d717b601420095e2787dde1a00c0a8d5f96176bcb1fdb9965b84fd87e19f` |
+| 依赖 | 构建内 `uv pip check`：114 个包全部兼容（以 `requirements.lock.txt` 约束；macOS 锁文件在 Linux 上无需调整） |
+| 冒烟（`sao-golden-smoke-*` 容器/网络/卷，结束后全部删除） | 只读根文件系统运行：`/_stcore/health` 200、首页 200；系统 CA bundle 存在；容器内 `tests.test_runtime` + `tests.test_onprem_k8s` 37 个 OK（3 个部署工具测试因镜像不含 `deploy/` 而跳过）；连接 `pgvector/pgvector:pg17`（PostgreSQL 17.12）成功 |
+| 镜像卫生 | `/app` 无 `.git`、`.venv`、`.runtime`、`.work`、`data`、`.agent-context`、`tests`、`secrets.toml`（`.streamlit/` 仅 `config.toml`、`secrets.toml.example`）；`docker history` 无凭据类构建参数；导出 `/app` 跑 `check-public-hygiene.sh --path` PASS（`<BUILD_HOST>` 的 `.work/hygiene-terms.txt` 提供本地词表） |
+| Docker Hub | `is_private: false`；匿名取 manifest 200，digest 与上表一致 |
+
+**问题与处理**（试错）：
+1. 构建机上找不到 `deploy/k8s/build/build-image.sh`：上游 `.gitignore` 的 Python 打包规则 `build/` 同时忽略了 `deploy/k8s/build/`，脚本从未进入 Git。处理：规则改为只匹配根目录 `/build/`（提交 `8b72a33`）。
+2. 构建后以非 root 运行 `uv pip check` 报 `Failed to initialize cache at /home/app/.cache/uv`：构建时 root 在 `HOME` 下创建了 uv 缓存。处理：`UV_CACHE_DIR=/tmp/.uv-cache`，安装后删除缓存（提交 `7af15f9`）。
+3. 冒烟中容器内 3 个测试报错：部署工具测试需要 `deploy/`，而镜像按设计不含。处理：缺少该工具时跳过（提交 `03a0a1f`）。
+4. 失败的中间标签 `1.0.0-8b72a33`、`1.0.0-7af15f9` 只在构建机本地，未推送；第 9 阶段清理。
