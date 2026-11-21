@@ -72,8 +72,10 @@ venv.bak/
 ehthumbs.db
 Thumbs.db
 
-# Streamlit
+# Streamlit (one secrets.toml; per-backend copies secrets.toml.<backend> stay local)
 .streamlit/secrets.toml
+.streamlit/secrets.toml.*
+!.streamlit/secrets.toml.example
 
 # Environment variables
 .env
@@ -134,6 +136,7 @@ chroma_db/*
 *.db
 # Local runtime and validation artifacts
 .runtime/
+.work/
 .pytest_cache/
 *.dump
 *.sql.gz

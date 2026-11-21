@@ -18,6 +18,7 @@ from helpers.llm_utils import (
     get_default_chat_model,
     get_llm_provider,
     get_domain_chat_model,
+    get_provider_default_model,
 )
 from helpers.pgvector_utils import get_pgvector_store, strict_index_provider, verify_strict_index
 from domain_manager import DomainManager
@@ -100,10 +101,7 @@ class DomainRAGSystem:
 
             chat_provider = get_llm_provider()
 
-            _provider_default_model = {
-                "hosted": model_config.get("hosted_default_model"),
-                "bedrock": model_config.get("bedrock_default_model"),
-            }.get(chat_provider, model_config.get("default_model"))
+            _provider_default_model = get_provider_default_model(model_config, chat_provider)
 
             llm_model = (
                 self.model_name

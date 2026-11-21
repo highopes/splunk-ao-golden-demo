@@ -1,0 +1,85 @@
+# 工程记录：Golden Demo 部署到 Kubernetes、后端改为 Splunk AO On-prem（2026-11-21 起）
+
+> 本文件是本次升级改造的**逐条执行记录**（审计用，已脱敏）。想按步骤安装或日常运维：看 [KUBERNETES.md](../KUBERNETES.md) 与 [README.md](../../README.md)。
+>
+> 脱敏约定（本仓库为 Public）：
+>
+> | 占位符 | 含义 |
+> | --- | --- |
+> | `<AO_DOMAIN>` | AO On-prem 的公网域名后缀（`console.<AO_DOMAIN>`、`api.<AO_DOMAIN>`） |
+> | `<APP_HOST>` | 本应用的公网主机名（`golden.<AO_DOMAIN>`） |
+> | `<OPS_NODE>` | 执行 kubectl/helm 的集群运维节点（本应用工作副本 `/root/<WORKDIR>`） |
+> | `<BUILD_HOST>` | 镜像构建主机（工作副本 `/root/<BUILD_WORKDIR>`） |
+> | `<NODE_IP>` | 集群节点 IP |
+> | `<PG_NODE>` | PostgreSQL 固定调度的节点 |
+> | `<BASIC_AUTH_USER>` | Basic Auth 账号名 |
+>
+> 原始日志在各主机工作副本的 `.work/logs/`（不进 Git），本文只写路径与摘要。
+
+## 当前状态
+
+| 项 | 状态 |
+| --- | --- |
+| 阶段 | 0 完成；1 进行中 |
+| 本仓库 HEAD（GitHub / Mac / `<OPS_NODE>` / `<BUILD_HOST>`） | `90602f3`（四处一致） |
+| 镜像 | 未构建 |
+| 命名空间 `sao-golden` | 未创建 |
+| 未决事项 | 无 |
+
+## 执行记录
+
+### 2026-11-21 阶段 0：准备工作目录与核对（执行者：Mac 上的 GitHub Copilot，经 JumpServer Web 终端；20:42 开始，20:50 完成）
+
+1. **Mac**：本仓库 `90602f3` 与 `origin/main` 一致，工作区干净（`.git/info/exclude` 已含 `.streamlit/secrets.toml.*`）。AO 平台仓库与 GitHub 一致。
+2. **Mac 配置核对**（只输出键名与“空/非空”，不显示值）：`secrets.toml.imlab-onprem`（16 个键）与 `secrets.toml.imlab-onprem-k8s`（21 个键 + `[k8s]` 表 8 个键）全部非空；`galileo_api_key`、`[k8s].basic_auth_password` 已由用户填写。
+3. **`<OPS_NODE>`**：AO 平台仓库工作副本与 GitHub 一致（无需快进）。
+4. **`<OPS_NODE>` 本应用工作副本**：用户已放入 `.streamlit/secrets.toml`（及各后端版本）并执行过空的 `git init`，因此原地初始化：
+   ```bash
+   cd /root/<WORKDIR>
+   git remote add origin git@github.com:highopes/splunk-ao-golden-demo.git
+   printf '.streamlit/secrets.toml.*\n.work/\n' >> .git/info/exclude
+   git fetch -q origin && git checkout -q -B main origin/main && git branch -q -u origin/main
+   chmod 700 . .streamlit && chmod 600 .streamlit/secrets.toml*
+   mkdir -p .work/logs && chmod 700 .work .work/logs
+   ```
+   结果：`main` 跟踪 `origin/main`，HEAD `90602f3`，`git status --short` 为空。`secrets.toml` 键齐全、值非空；其 SHA256 与 Mac 上 `secrets.toml.imlab-onprem-k8s` 一致。
+5. **`<BUILD_HOST>`**：`apt-get install -y tmux`（tmux 3.4，A1）；`git clone` 到 `/root/<BUILD_WORKDIR>`（HEAD `90602f3`）；`.git/info/exclude` 加 `.work/`、`.streamlit/secrets.toml.*`；建 `.work/logs`（700）。Docker Hub 已登录（`/root/.docker/config.json` 只核对键 `https://index.docker.io/v1/`，权限 600）；`docker buildx ls` 默认 builder 运行中（BuildKit v0.29.0，含 linux/amd64）。根盘剩余 223G。
+6. **Mac 防休眠**：`caffeinate -dimsu`（异步，全部结束后停止）。
+7. **结果**：✅ 四处 HEAD 一致、工作区干净；H1～H3 核对通过，无缺项。
+
+### 2026-11-21 阶段 1：代码适配（执行者：Mac 上的 GitHub Copilot；20:55 开始，21:25 完成）
+
+**改动清单**（提交点 C1）：
+
+| 范围 | 文件 | 要点 |
+| --- | --- | --- |
+| 忽略规则 | `.gitignore` | 第一个改动：`.streamlit/secrets.toml.*`（保留 `!.streamlit/secrets.toml.example`）、`.work/` |
+| Backend profile | `setup_env.py` | `BACKEND_PROFILES` 注册表：`splunkse`（行为不变：Console 代理 `/api/agent-control`、`Galileo-API-Key`、`/splunkse` 入口）与 `imlab-onprem`（API 由 `console.`→`api.` 推导、Agent Control = `<api>/agent-control`、头名默认 `Splunk-AO-API-Key` 也允许 `Galileo-API-Key`、Console 无租户路径、REST 直连 API）；`resolve_backend_settings()` 单一解析入口；显式 `galileo_api_url` / `galileo_ingest_url` / `agent_control_url` 优先；配置错误信息不含任何值（`BackendConfigError`） |
+| Ingest 地址 | `helpers/galileo_ingest.py` | `configure_ingest_url()`：SDK 的 `/ingest/healthz` 探测与 `ingest_traces` / `ingest_spans` 写入改用 `galileo_ingest_url`；trace/span 更新与 session 调用仍走 API（与官方 Observe Request Flow 一致：只有 `/ingest` 与 `/otel/v1/traces` 到 ingest-service）。未配置时不打补丁、行为不变 |
+| REST helper | `helpers/galileo_api_helpers.py` | `GALILEO_REST_BASE_URL`：splunkse 仍走 `<console>/api/galileo`；imlab-onprem 直连 `<api>/public/v2/...`、`<api>/v2/...`；集群内代码不访问 Console 地址（Console 只用于浏览器链接） |
+| Agent Control | `helpers/agent_control_helpers.py` | 头名缺省值取自 profile |
+| UI | `app.py` | 按钮 “Open Splunk AO Console”；侧栏与未配置页显示 `Backend: <profile>`；vLLM provider 选项；实验指标按 profile / Domain YAML |
+| 预检 | `scripts/check_demo.py` | 按 profile 校验；`--in-cluster`（本 Pod `/_stcore/health`、CA bundle 环境变量、内部地址 TLS 校验、SDK 是否走原生 ingest 门、Agent Control 注册回读） |
+| Luna 指标 | `setup_env.py`、`experiments/experiment_helpers.py`、`experiments/cisco_se_economics.py`、`scripts/run_cisco_se_ab.py`、`experiments/run_experiment.py`、`domains/cisco_se/config.yaml` | 实验指标 = Domain YAML `experiments.metrics`（列表或按 profile 的映射）或 profile 默认；imlab-onprem 默认 Ground Truth Adherence（无 Luna 版本，LLM 评判）+ Context Adherence / Prompt Injection / Completeness (SLM)；Cisco SE 导出器在 on-prem 优先取 Luna 变体；`run_experiment.py` 新增 `--provider` |
+| vLLM provider | `helpers/hermes_chat.py`（新）、`helpers/llm_utils.py`、`domain_manager.py`、`agent_frameworks/langgraph/*.py` | `HermesToolCallChatOpenAI`：在 `_generate/_agenerate` 内（回调之前）把 `<tool_call>{json}</tool_call>` 解析为结构化 `tool_calls`，JSON 损坏时保留原文；请求带 `chat_template_kwargs.enable_thinking=false` 并清除 `<think>`；关闭流式以保证走解析路径。provider 键 `vllm`（显示名 `vLLM (<模型>)`），优先级最低（默认仍为 OpenAI）；RAG embedding 固定为 hosted |
+| 容器化 | `scripts/export_cisco_se_economics.py`、`scripts/run_cisco_se_ab.py` | 输出目录可由 `DEMO_DATA_DIR` 指定（默认仍为 `data/`） |
+| 构建与部署 | `Dockerfile`、`.dockerignore`、`deploy/helm/splunk-ao-golden-demo/`、`deploy/k8s/scripts/`、`deploy/k8s/build/build-image.sh` | 见下 |
+| 卫生检查 | `scripts/check-public-hygiene.sh` | 通用模式（内网 IPv4、私钥、各类 Key/Token、htpasswd 哈希、JWT）+ 运行时从本地被忽略的 `secrets.toml*` 与 `.work/hygiene-terms.txt` 读取的环境专有词与密钥值；输出只含规则、文件、行号；`--path` 扫描镜像文件系统 |
+| 示例配置 | `.streamlit/secrets.toml.example` | profile 说明、按后端保存的文件约定、集群内地址键、vLLM 键、`[k8s]` 表示例（全部占位符） |
+| 测试 | `tests/test_onprem_k8s.py`（新，20 个） | profile 推导与覆盖、切换 profile 清除旧 ingest 地址、错误不泄露值、REST 路径、ingest 地址补丁（探测/写入/更新分流、未配置不变）、Hermes 解析（单个/多个/JSON 损坏/无调用/`<think>`/回调前解析/回传消息格式）、vLLM provider 与 embedding、Luna 指标选择、`[k8s]` 表剥离与密钥不上终端 |
+
+**部署设计要点**：
+- Dockerfile：`python:3.12-slim` 固定 digest（Python 3.12.16）+ uv 0.11.2，`requirements.txt` 以 `requirements.lock.txt` 约束安装到 `/opt/venv`，构建内 `uv pip check`；非 root（uid 10001）；`STREAMLIT_SERVER_ADDRESS=0.0.0.0` 等以环境变量覆盖（不改 Mac 的 `config.toml`）；`HEALTHCHECK /_stcore/health`。`.dockerignore` 排除 `.git .venv .runtime .work data .agent-context secrets.toml*（保留 example）tests documentation deploy` 等。
+- Helm chart：app Deployment（1 副本、`Recreate`、只读根文件系统、`automountServiceAccountToken: false`、`/tmp` `/home/app` `/data` 为 emptyDir、initContainer 合并系统 CA 与 ConfigMap `ao-internal-ca` → `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE`、`config-checksum` 注解使配置变更触发重建）；PostgreSQL StatefulSet（`pgvector/pgvector:pg17`、PVC 5Gi、节点可固定）；Ingress（`nginx`、TLS、Basic Auth 注解、超时 3600）；init Job 模板默认不渲染。Secret 只按名称引用，密钥不进 Helm values / release 历史；`image.tag` 必填且禁止 `latest`。
+- 脚本：`secrets_tool.py`（只读 `secrets.toml`；`check` 只输出键名与 set/EMPTY；密钥类输出拒绝写到终端，只能进管道）；`10-prepare-namespace.sh`（幂等；只读 AO 的 CA ConfigMap；自签 TLS 已存在则复用；`openssl passwd -apr1 -stdin` 计算哈希）；`20-deploy.sh <tag>`；`30-init-data.sh`（按需 Job）；`40-verify.sh`（Pod 内预检 + 经共享 ingress NodePort 的 401/200 检查，凭据经 `curl -K -` 标准输入）；`90-rollback.sh`（不含卸载/删除）。
+
+**验证**：
+- 单元测试：`DEMO_TEST_POSTGRES=1 python -m unittest discover -s tests -p 'test_*.py' -v` → **Ran 70, OK**（原 50 + 新 20；含 PG 集成测试）。
+- `helm lint` 通过；`helm template` 渲染 5 个对象（2 Service、Deployment、StatefulSet、Ingress），init Job 单独渲染正常；缺 `image.tag` 或为 `latest` 时拒绝渲染。
+- **splunkse 回归**（SaaS Key 有效）：`scripts/check-demo.sh --live` 全部 PASS（含 Project/Log Stream、原生 ingest 门、Agent Control `/health`、5 个 hosted 模型）；UI Healthcare 两个例题：Lisinopril（10–40 mg、干咳等，RAG 正确）、P001（George Rivera，工具调用正确），侧栏 “Agent Control connected”、`Backend: splunkse`。
+- 卫生检查：`bash scripts/check-public-hygiene.sh` → PASS；反向验证（临时文件含环境词、内网 IP、apr1 哈希）3 处均被拦截。
+
+**问题与处理**：
+- 单元测试日志写到 OneDrive 同步目录中**同名**文件时被清空（退出码 120，内容丢失）；同样的测试输出到 `/tmp` 正常。原因：OneDrive 对快速重写的同名文件的同步干扰。处理：日志文件名一律带时间戳。
+- 卫生检查初版把 `agent_control_api_key_header`（键名含 key，值只是头名）当成密钥值造成误报；改为排除 `*_header` 键。
+- `[k8s]` 表最初按“必须在末尾”设计；实现上任意位置都能正确剥离，并以“剥离后重新解析应等于原内容去掉 k8s”作校验（多行字符串中含 `[k8s]` 文本时拒绝）。

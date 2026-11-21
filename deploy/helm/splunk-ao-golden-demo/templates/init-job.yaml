@@ -1,0 +1,52 @@
+{{- if .Values.initJob.enabled }}
+{{- $fullname := include "golden.fullname" . -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ default (printf "%s-init" $fullname) .Values.initJob.name }}
+  labels:
+    {{- include "golden.labels" . | nindent 4 }}
+    app.kubernetes.io/component: init
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ .Values.initJob.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: {{ .Values.initJob.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "golden.selector" . | nindent 8 }}
+        app.kubernetes.io/component: init
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: init
+          image: {{ include "golden.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          # Relational CSV import + embeddings for each domain; idempotent
+          # (collections are rebuilt with pre_delete_collection).
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              for domain in $DOMAINS; do
+                echo "== init $domain"
+                python helpers/setup_vectordb.py "$domain"
+              done
+              echo "INIT_DONE"
+          env:
+            - name: DOMAINS
+              value: {{ join " " .Values.initJob.domains | quote }}
+            - name: HOME
+              value: /home/app
+          resources:
+            {{- toYaml .Values.initJob.resources | nindent 12 }}
+          volumeMounts:
+            {{- include "golden.configMounts" . | nindent 12 }}
+      volumes:
+        {{- include "golden.configVolumes" . | nindent 8 }}
+{{- end }}

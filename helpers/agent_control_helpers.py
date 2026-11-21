@@ -405,6 +405,16 @@ def wrap_controlled_langchain_tool(tool, galileo_logger, step_name: str = "retri
     )
 
 
+def _profile_default_control_header() -> str:
+    """Agent Control header name of the active backend profile (splunkse: Galileo-API-Key)."""
+    try:
+        from setup_env import get_backend_profile
+
+        return get_backend_profile().default_control_header
+    except ValueError:
+        return "Galileo-API-Key"
+
+
 def init_agent_control(
     galileo_logger,
     project_name: str,
@@ -424,7 +434,7 @@ def init_agent_control(
     server_url = os.environ.get("AGENT_CONTROL_URL")
     agent_name = os.environ.get("AGENT_CONTROL_AGENT_NAME")
     api_key = os.environ.get("GALILEO_API_KEY")
-    api_key_header = os.environ.get("AGENT_CONTROL_API_KEY_HEADER", "Galileo-API-Key")
+    api_key_header = os.environ.get("AGENT_CONTROL_API_KEY_HEADER") or _profile_default_control_header()
 
     if not all([server_url, agent_name, api_key]):
         print(

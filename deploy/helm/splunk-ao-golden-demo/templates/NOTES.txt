@@ -1,0 +1,8 @@
+Splunk AO Golden Demo ({{ .Release.Name }}) in namespace {{ .Release.Namespace }}.
+
+  URL:    https://{{ .Values.ingress.host }}/  (Basic Auth: {{ .Values.ingress.basicAuth.enabled }})
+  Image:  {{ .Values.image.repository }}:{{ .Values.image.tag }}
+
+Next steps (from the app's working copy):
+  bash deploy/k8s/scripts/30-init-data.sh     # first install or data rebuild (OpenAI embeddings are billed)
+  bash deploy/k8s/scripts/40-verify.sh

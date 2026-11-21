@@ -41,12 +41,14 @@ from helpers.galileo_compat import tolerate_unknown_permission_actions  # noqa: 
 from setup_env import get_domain_project_name, setup_environment  # noqa: E402
 
 DOMAIN = "cisco_se"
-DEFAULT_OUTPUT = ROOT / "data" / "cisco_se_model_economics.csv"
+# DEMO_DATA_DIR points writable output elsewhere (e.g. a container volume).
+DATA_DIR = Path(os.environ.get("DEMO_DATA_DIR") or ROOT / "data")
+DEFAULT_OUTPUT = DATA_DIR / "cisco_se_model_economics.csv"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--output", default=str(DEFAULT_OUTPUT), help="CSV output path (default: data/cisco_se_model_economics.csv)")
+    parser.add_argument("--output", default=str(DEFAULT_OUTPUT), help="CSV output path (default: $DEMO_DATA_DIR or data/, cisco_se_model_economics.csv)")
     parser.add_argument("--project", help="Project name (default: cisco_se galileo.project); Projects of other domains are rejected")
     parser.add_argument("--group", help="Experiment Group name (default: cisco_se experiments.group)")
     parser.add_argument("--prefix", help="Only export Experiments whose name starts with this prefix")

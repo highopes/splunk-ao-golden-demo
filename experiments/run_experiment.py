@@ -23,14 +23,17 @@ from experiments.experiment_helpers import (
     get_domain_dataset_name,
     get_dataset_by_name,
     run_domain_experiment,
-    DEFAULT_METRICS
+    resolve_experiment_metrics,
 )
+from helpers.llm_utils import default_provider
 
 
 def main():
     parser = argparse.ArgumentParser(description="Run Galileo experiment for a domain")
     parser.add_argument("domain", help="Domain name (e.g., 'finance')")
     parser.add_argument("--experiment-name", help="Custom experiment name", default=None)
+    parser.add_argument("--provider", choices=["local", "hosted", "bedrock", "vllm"], default=None,
+                        help="Chat provider (default: the first configured one, as preselected in the UI)")
     
     args = parser.parse_args()
     
@@ -63,11 +66,14 @@ def main():
     
     # Create agent factory
     agent_factory = AgentFactory()
+    metrics = resolve_experiment_metrics(domain_config.config)
+    provider = args.provider or default_provider() or "local"
     
     print(f"Running experiment: {experiment_name}")
     print(f"Domain: {args.domain}")
     print(f"Dataset: {dataset_name}")
-    print(f"Metrics: {[m.name for m in DEFAULT_METRICS]}")
+    print(f"Provider: {provider}")
+    print(f"Metrics: {[m.name for m in metrics]}")
     
     # Run the experiment
     try:
@@ -76,7 +82,8 @@ def main():
             experiment_name=experiment_name,
             dataset=dataset,
             agent_factory=agent_factory,
-            metrics=DEFAULT_METRICS
+            metrics=metrics,
+            llm_provider=provider,
         )
         
         print("✅ Experiment completed successfully!")

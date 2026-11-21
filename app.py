@@ -41,7 +41,7 @@ from experiments.experiment_helpers import (
     read_dataset_csv,
     run_domain_experiment,
     get_domain_dataset_name,
-    AVAILABLE_METRICS
+    get_available_metrics,
 )
 
 # Configuration
@@ -75,6 +75,11 @@ def _models_for_provider(domain_info: dict, provider: str) -> tuple[list[str], s
     elif provider == "bedrock":
         models = domain_info.get("bedrock_models") or ["mistral.ministral-3-14b-instruct", "mistral.ministral-3-8b-instruct"]
         default = domain_info.get("bedrock_default_model") or models[0]
+    elif provider == "vllm":
+        from helpers.llm_utils import get_default_chat_model
+
+        models = domain_info.get("vllm_models") or [get_default_chat_model(provider="vllm")]
+        default = domain_info.get("vllm_default_model") or models[0]
     else:
         models = domain_info.get("local_models") or domain_info.get("available_models") or ["gemma4"]
         default = (
@@ -108,13 +113,28 @@ def _invalidate_domain_agent_state(domain_name: str) -> None:
 
 
 def _normalize_provider(provider: Optional[str]) -> str:
-    """Normalize provider values to 'local', 'hosted', or 'bedrock'."""
+    """Normalize provider values to 'local', 'hosted', 'bedrock', or 'vllm'."""
     normalized = str(provider or "local").strip().lower()
     if normalized in {"hosted", "openai"}:
         return "hosted"
     if normalized in {"bedrock", "aws"}:
         return "bedrock"
+    if normalized in {"vllm", "qwen"}:
+        return "vllm"
     return "local"
+
+
+def _provider_label(provider: str) -> str:
+    """Sidebar label for a provider; the vLLM label names its default model."""
+    if provider == "vllm":
+        from helpers.llm_utils import get_default_chat_model
+
+        return f"vLLM ({get_default_chat_model(provider='vllm').split('/')[-1]})"
+    return {
+        "local": "Local (Ollama)",
+        "hosted": "Hosted (OpenAI)",
+        "bedrock": "Bedrock (AWS)",
+    }.get(provider, provider)
 
 
 def render_model_settings(domain_name: str, domain_config_key: str) -> tuple[str, str]:
@@ -133,7 +153,7 @@ def render_model_settings(domain_name: str, domain_config_key: str) -> tuple[str
     provider_options = configured_providers()
     if not provider_options:
         st.error(
-            "No LLM provider is configured. Set `ollama_base_url`, `openai_api_key`, "
+            "No LLM provider is configured. Set `ollama_base_url`, `openai_api_key`, `vllm_base_url`, "
             "or `bedrock_api_key` in `.streamlit/secrets.toml`."
         )
         st.stop()
@@ -160,17 +180,12 @@ def render_model_settings(domain_name: str, domain_config_key: str) -> tuple[str
         st.session_state[prev_provider_key] = st.session_state[provider_key]
 
     prev_provider = st.session_state[prev_provider_key]
-    provider_labels = {
-        "local": "Local (Ollama)",
-        "hosted": "Hosted (OpenAI)",
-        "bedrock": "Bedrock (AWS)",
-    }
     # The current selection is driven by st.session_state[provider_key] (seeded
     # above), so we don't pass index — Streamlit uses the session value.
     selected_provider = st.radio(
         "Model provider",
         options=provider_options,
-        format_func=lambda x: provider_labels.get(x, x),
+        format_func=_provider_label,
         key=provider_key,
         horizontal=True,
     )
@@ -220,6 +235,7 @@ def render_model_settings(domain_name: str, domain_config_key: str) -> tuple[str
             "local": "Ollama model used for chat and experiments",
             "hosted": "OpenAI model used for chat and experiments",
             "bedrock": "AWS Bedrock model used for chat and experiments",
+            "vllm": "OpenAI-compatible vLLM model used for chat and experiments (embeddings stay on OpenAI)",
         }.get(selected_provider, "Model used for chat and experiments"),
     )
     if selected_model != prev_model:
@@ -482,6 +498,7 @@ def render_experiments_page(domain_name: str, domain_config, agent_factory):
             "hosted": "OpenAI",
             "bedrock": "Bedrock",
             "local": "Ollama",
+            "vllm": "vLLM",
         }.get(_normalize_provider(experiment_provider), "Ollama")
         st.caption(
             f"Provider: **{provider_label}** | Model: **{experiment_model or 'default'}** (change in sidebar)"
@@ -504,8 +521,9 @@ def render_experiments_page(domain_name: str, domain_config, agent_factory):
         st.markdown("Choose which metrics to evaluate:")
         
         selected_metrics = {}
+        available_metrics = get_available_metrics(domain_config.config)
         cols = st.columns(2)
-        for idx, (metric_name, metric_obj) in enumerate(AVAILABLE_METRICS.items()):
+        for idx, (metric_name, metric_obj) in enumerate(available_metrics.items()):
             with cols[idx % 2]:
                 selected_metrics[metric_name] = st.checkbox(
                     metric_name,
@@ -515,7 +533,7 @@ def render_experiments_page(domain_name: str, domain_config, agent_factory):
         
         # Get selected metrics as list
         metrics_to_run = [
-            metric_obj for metric_name, metric_obj in AVAILABLE_METRICS.items()
+            metric_obj for metric_name, metric_obj in available_metrics.items()
             if selected_metrics[metric_name]
         ]
         
@@ -896,7 +914,8 @@ def multi_domain_agent_app(domain_name: str):
             st.caption("Healthcare · Primary Demo" if domain_name == "healthcare" else f"{domain_name.title()} · Additional Domain")
             st.button("Reset Demo Session", on_click=reset_demo_session, help="Clear chat, dataset selection, chaos toggles and counters. Console policies are managed separately.")
             st.subheader("Splunk AO Tracing")
-            st.link_button("Open splunkse Console", os.environ.get("DEMO_CONSOLE_URL", "https://console.multitenant.galileocloud.io/splunkse"))
+            st.link_button("Open Splunk AO Console", os.environ.get("DEMO_CONSOLE_URL", "https://console.multitenant.galileocloud.io/splunkse"))
+            st.caption(f"Backend: {_backend_profile_name()}")
 
             # Get project and log stream names from environment variables (set by setup_environment)
             tracing_cfg = st.session_state[full_config_key].get("galileo", {})
@@ -1174,6 +1193,10 @@ def navigation_title(app_title: str, icon: str) -> str:
     return app_title
 
 
+def _backend_profile_name() -> str:
+    return os.environ.get("DEMO_BACKEND_PROFILE", "splunkse")
+
+
 def create_domain_page(domain_name: str):
     """Create a page function for a specific domain"""
     def page_func():
@@ -1189,7 +1212,7 @@ def main():
         st.title("Splunk AO Golden Demo")
         st.info("Complete the local configuration to start the Healthcare demo.")
         st.markdown("1. Edit `.streamlit/secrets.toml` locally with your OpenAI and Splunk AO API keys.\n2. Start PostgreSQL and load Healthcare data using the README.\n3. Restart the app after changing secrets.")
-        st.caption("Synthetic demo data only · Primary domain: Healthcare · Backend: splunkse")
+        st.caption(f"Synthetic demo data only · Primary domain: Healthcare · Backend: {_backend_profile_name()}")
         st.stop()
     # Initialize domain manager
     dm = DomainManager()

@@ -1,0 +1,109 @@
+# Generic defaults only. Environment-specific values (host, image, node) are
+# passed with --set by deploy/k8s/scripts/20-deploy.sh from the [k8s] table of
+# .streamlit/secrets.toml. Credentials are never Helm values: the templates only
+# reference Secrets created by deploy/k8s/scripts/10-prepare-namespace.sh, so
+# nothing secret is stored in the Helm release history.
+
+nameOverride: ""
+
+image:
+  repository: example/splunk-ao-golden-demo
+  # Required. Deploy immutable tags only (<version>-<git short sha>), never "latest".
+  tag: ""
+  pullPolicy: IfNotPresent
+
+app:
+  port: 8501
+  # sha256 of the app Secret content, set by 20-deploy.sh; a change rolls the Pod.
+  configChecksum: ""
+  # Secret holding the app's secrets.toml (key "secrets.toml"); default <release>-app.
+  secretName: ""
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  extraEnv: []
+
+# Splunk AO's internal CA (public certificate only), copied into this namespace
+# by 10-prepare-namespace.sh. An init container merges it with the system CA
+# bundle; SSL_CERT_FILE / REQUESTS_CA_BUNDLE point the SDKs at the merged file.
+aoCa:
+  enabled: true
+  configMapName: ao-internal-ca
+  key: ca.crt
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+ingress:
+  enabled: true
+  className: nginx
+  # Required, e.g. golden.<domain>.
+  host: ""
+  # TLS Secret; default <release>-tls.
+  tlsSecretName: ""
+  basicAuth:
+    enabled: true
+    # htpasswd Secret (key "auth"); default <release>-basic-auth.
+    secretName: ""
+    realm: "Splunk AO Golden Demo"
+  # Streamlit keeps one WebSocket per browser session; long answers must not time out.
+  proxyTimeoutSeconds: 3600
+  annotations: {}
+
+postgres:
+  enabled: true
+  image:
+    repository: pgvector/pgvector
+    tag: pg17
+    pullPolicy: IfNotPresent
+  database: vectordb
+  user: postgres
+  # Secret with key "postgres-password"; default <release>-postgres.
+  secretName: ""
+  storage:
+    size: 5Gi
+    # Empty uses the cluster default StorageClass.
+    storageClassName: ""
+  # Pin to one node (node-local storage classes bind the PVC to that node).
+  nodeName: ""
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+# Data initialization Job. Never part of the release: 30-init-data.sh renders
+# it with --set initJob.enabled=true and creates it on demand (embeddings are billed).
+initJob:
+  enabled: false
+  name: ""
+  domains: ["healthcare", "bank", "insurance", "restaurant", "cisco_se"]
+  activeDeadlineSeconds: 3600
+  ttlSecondsAfterFinished: 86400
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi

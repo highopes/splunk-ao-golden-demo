@@ -124,12 +124,20 @@ class DomainManager:
             m for m in bedrock_additional if m != bedrock_default
         ]
 
+        # Optional OpenAI-compatible vLLM server; the default comes from
+        # vllm_default_chat_model in secrets.toml unless the domain pins one.
+        from helpers.llm_utils import get_default_chat_model
+
+        vllm_default = model_cfg.get("vllm_default_model") or get_default_chat_model(provider="vllm")
+        vllm_additional = model_cfg.get("vllm_additional_models") or []
+        vllm_models = [vllm_default] + [m for m in vllm_additional if m != vllm_default]
+
         # Optional allowlist of chat providers a domain supports (e.g. a
         # hosted-only A/B domain). Absent means every configured provider.
         providers = model_cfg.get("providers")
         if providers is not None:
             providers = [str(p).strip().lower() for p in providers]
-            unknown = sorted(set(providers) - {"local", "hosted", "bedrock"})
+            unknown = sorted(set(providers) - {"local", "hosted", "bedrock", "vllm"})
             if not providers or unknown:
                 raise ValueError(
                     f"Domain '{domain_name}' has invalid model.providers: {model_cfg.get('providers')}"
@@ -149,6 +157,8 @@ class DomainManager:
             "hosted_default_model": hosted_default,
             "bedrock_models": bedrock_models,
             "bedrock_default_model": bedrock_default,
+            "vllm_models": vllm_models,
+            "vllm_default_model": vllm_default,
             "providers": providers,
             "ui": domain_config.config.get("ui", {}),
         }

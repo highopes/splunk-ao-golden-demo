@@ -1,5 +1,9 @@
 """
-LLM and embedding helpers for local (Ollama), hosted (OpenAI), and AWS Bedrock inference.
+LLM and embedding helpers for local (Ollama), hosted (OpenAI), AWS Bedrock, and an
+optional OpenAI-compatible vLLM chat server (e.g. Qwen3 in the same cluster).
+
+The vLLM provider is chat-only: RAG embeddings use the hosted (OpenAI) index
+unless EMBEDDING_PROVIDER pins another backend.
 """
 import json
 import os
@@ -12,11 +16,12 @@ from langchain_core.embeddings import Embeddings
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_ollama import ChatOllama, OllamaEmbeddings
 
-LLMProvider = Literal["local", "hosted", "bedrock"]
+LLMProvider = Literal["local", "hosted", "bedrock", "vllm"]
 
 DEFAULT_LOCAL_CHAT_MODEL = "gemma4"
 DEFAULT_HOSTED_CHAT_MODEL = "gpt-5.4-nano"
 DEFAULT_BEDROCK_CHAT_MODEL = "mistral.ministral-3-14b-instruct"
+DEFAULT_VLLM_CHAT_MODEL = "Qwen/Qwen3-14B-FP8"
 DEFAULT_LOCAL_EMBEDDING_MODEL = "nomic-embed-text"
 DEFAULT_HOSTED_EMBEDDING_MODEL = "text-embedding-3-large"
 DEFAULT_BEDROCK_EMBEDDING_MODEL = "amazon.titan-embed-text-v2:0"
@@ -47,13 +52,18 @@ def reset_llm_provider(token: Token) -> None:
 
 
 def get_llm_provider() -> LLMProvider:
-    """Return the active LLM provider ('local'=Ollama, 'hosted'=OpenAI, 'bedrock'=AWS)."""
+    """Return the active LLM provider ('local'=Ollama, 'hosted'=OpenAI, 'bedrock'=AWS, 'vllm')."""
     return _llm_provider_ctx.get()
 
 
 def get_ollama_base_url() -> str:
     """Return the Ollama server URL (default: http://localhost:11434)."""
     return os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+
+
+def get_vllm_base_url() -> str:
+    """Return the OpenAI-compatible vLLM base URL (ends with /v1), or empty when unset."""
+    return os.environ.get("VLLM_BASE_URL", "").strip().rstrip("/")
 
 
 def get_bedrock_region() -> str:
@@ -99,7 +109,22 @@ def get_default_chat_model(*, provider: Optional[LLMProvider] = None) -> str:
         return os.environ.get("OPENAI_DEFAULT_CHAT_MODEL", DEFAULT_HOSTED_CHAT_MODEL)
     if resolved == "bedrock":
         return os.environ.get("BEDROCK_DEFAULT_CHAT_MODEL", DEFAULT_BEDROCK_CHAT_MODEL)
+    if resolved == "vllm":
+        return os.environ.get("VLLM_DEFAULT_CHAT_MODEL") or DEFAULT_VLLM_CHAT_MODEL
     return os.environ.get("OLLAMA_DEFAULT_CHAT_MODEL", DEFAULT_LOCAL_CHAT_MODEL)
+
+
+def get_provider_default_model(model_config: Optional[dict], provider: Optional[str]) -> Optional[str]:
+    """Domain default chat model for ``provider`` (falls back to ``default_model``)."""
+    cfg = model_config or {}
+    key = {
+        "hosted": "hosted_default_model",
+        "bedrock": "bedrock_default_model",
+        "vllm": "vllm_default_model",
+    }.get(str(provider or ""))
+    if key == "vllm_default_model":
+        return cfg.get(key) or get_default_chat_model(provider="vllm")
+    return (cfg.get(key) if key else None) or cfg.get("default_model") or cfg.get("model_name")
 
 
 def get_embedding_dimensions() -> int:
@@ -182,10 +207,16 @@ def ollama_configured() -> bool:
     return bool(os.environ.get("OLLAMA_BASE_URL", "").strip())
 
 
+def vllm_configured() -> bool:
+    """True if an OpenAI-compatible vLLM base URL is configured (vllm_base_url)."""
+    return bool(get_vllm_base_url())
+
+
 # Provider ordering for the UI. Display order is how options appear in the
 # radio; priority order decides which configured provider is preselected.
-_PROVIDER_DISPLAY_ORDER: tuple = ("local", "hosted", "bedrock")
-_PROVIDER_PRIORITY: tuple = ("local", "bedrock", "hosted")
+_PROVIDER_DISPLAY_ORDER: tuple = ("local", "hosted", "bedrock", "vllm")
+# vLLM is an optional second chat provider; it is never preselected.
+_PROVIDER_PRIORITY: tuple = ("local", "bedrock", "hosted", "vllm")
 
 
 def provider_configured(provider: LLMProvider) -> bool:
@@ -198,6 +229,8 @@ def provider_configured(provider: LLMProvider) -> bool:
         return openai_api_key_configured()
     if provider == "bedrock":
         return bedrock_configured()
+    if provider == "vllm":
+        return vllm_configured()
     return ollama_configured()
 
 
@@ -209,7 +242,7 @@ def configured_providers() -> List[LLMProvider]:
 def default_provider() -> Optional[LLMProvider]:
     """Return the provider to preselect: first configured in priority order.
 
-    Priority is local > bedrock > hosted. Returns None if none are configured.
+    Priority is local > bedrock > hosted > vllm. Returns None if none are configured.
     """
     for provider in _PROVIDER_PRIORITY:
         if provider_configured(provider):
@@ -228,6 +261,8 @@ def embedding_backend_available(provider: LLMProvider) -> bool:
         return openai_api_key_configured()
     if provider == "bedrock":
         return bedrock_configured()
+    if provider == "vllm":
+        return False  # chat-only provider
     return is_ollama_available()
 
 
@@ -256,6 +291,9 @@ def resolve_embedding_provider(
     working.
     """
     requested: LLMProvider = provider or get_configured_embedding_provider() or get_llm_provider()
+    if requested == "vllm":
+        # The vLLM provider serves chat only; its RAG uses the OpenAI index.
+        requested = "hosted"
 
     if embedding_backend_available(requested):
         return requested
@@ -353,6 +391,8 @@ def get_domain_chat_model(domain_config: dict, *, override: Optional[str] = None
         return _llm_model_ctx.get()
     provider = get_llm_provider()
     model_cfg = domain_config.get("model", {})
+    if provider == "vllm":
+        return get_provider_default_model(model_cfg, "vllm")
     if provider == "hosted":
         return (
             model_cfg.get("hosted_default_model")
@@ -500,6 +540,32 @@ def get_chat_model(
         raise ValueError("reasoning_effort/use_responses_api are only supported for hosted OpenAI models")
     if temperature is None:
         temperature = 0.1
+
+    if resolved_provider == "vllm":
+        import httpx2
+
+        from helpers.hermes_chat import HermesToolCallChatOpenAI
+
+        base_url = get_vllm_base_url()
+        if not base_url:
+            raise ValueError(
+                "VLLM_BASE_URL is not set. Add vllm_base_url (OpenAI-compatible, ending in /v1) "
+                "to .streamlit/secrets.toml to use the vLLM provider."
+            )
+        kwargs = {
+            "model": model,
+            "base_url": base_url,
+            # vLLM without --api-key accepts any value; the OpenAI client needs one.
+            "api_key": os.environ.get("VLLM_API_KEY") or "EMPTY",
+            "temperature": temperature,
+            "http_async_client": httpx2.AsyncClient(
+                timeout=120, limits=httpx2.Limits(max_keepalive_connections=0)
+            ),
+            "timeout": 120,
+        }
+        if name:
+            kwargs["name"] = name
+        return HermesToolCallChatOpenAI(**kwargs)
 
     if resolved_provider == "bedrock":
         from langchain_aws import ChatBedrockConverse

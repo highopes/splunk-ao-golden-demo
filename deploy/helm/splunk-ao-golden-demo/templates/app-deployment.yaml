@@ -1,0 +1,131 @@
+{{- $fullname := include "golden.fullname" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-app
+  labels:
+    {{- include "golden.labels" . | nindent 4 }}
+    app.kubernetes.io/component: app
+spec:
+  # One presenter at a time: Agent Control and Project/Log Stream selection are
+  # process-wide state, so the app runs as a single replica.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "golden.selector" . | nindent 6 }}
+      app.kubernetes.io/component: app
+  template:
+    metadata:
+      labels:
+        {{- include "golden.selector" . | nindent 8 }}
+        app.kubernetes.io/component: app
+      annotations:
+        splunk-ao-golden-demo/config-checksum: {{ .Values.app.configChecksum | quote }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.app.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.app.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.app.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.aoCa.enabled }}
+      initContainers:
+        - name: ca-bundle
+          image: {{ include "golden.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          command: ["sh", "-c"]
+          args:
+            - cat /etc/ssl/certs/ca-certificates.crt /ao-ca/{{ .Values.aoCa.key }} > /ca-bundle/ca-bundle.crt
+          volumeMounts:
+            - name: ao-ca
+              mountPath: /ao-ca
+              readOnly: true
+            - name: ca-bundle
+              mountPath: /ca-bundle
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+      {{- end }}
+      containers:
+        - name: app
+          image: {{ include "golden.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.app.port }}
+          env:
+            - name: STREAMLIT_SERVER_ADDRESS
+              value: "0.0.0.0"
+            - name: STREAMLIT_SERVER_PORT
+              value: {{ .Values.app.port | quote }}
+            - name: HOME
+              value: /home/app
+            - name: DEMO_DATA_DIR
+              value: /data
+            {{- if .Values.aoCa.enabled }}
+            - name: SSL_CERT_FILE
+              value: /ca-bundle/ca-bundle.crt
+            - name: REQUESTS_CA_BUNDLE
+              value: /ca-bundle/ca-bundle.crt
+            {{- end }}
+            {{- with .Values.app.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          startupProbe:
+            httpGet:
+              path: /_stcore/health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet:
+              path: /_stcore/health
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /_stcore/health
+              port: http
+            periodSeconds: 30
+            failureThreshold: 4
+          resources:
+            {{- toYaml .Values.app.resources | nindent 12 }}
+          volumeMounts:
+            {{- include "golden.configMounts" . | nindent 12 }}
+            - name: data
+              mountPath: /data
+            {{- if .Values.aoCa.enabled }}
+            - name: ca-bundle
+              mountPath: /ca-bundle
+              readOnly: true
+            {{- end }}
+      volumes:
+        {{- include "golden.configVolumes" . | nindent 8 }}
+        - name: data
+          emptyDir: {}
+        {{- if .Values.aoCa.enabled }}
+        - name: ao-ca
+          configMap:
+            name: {{ .Values.aoCa.configMapName }}
+        - name: ca-bundle
+          emptyDir: {}
+        {{- end }}

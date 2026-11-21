@@ -17,6 +17,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from helpers.llm_utils import (
     describe_model_runtime,
     get_chat_model,
+    get_provider_default_model,
     get_model_runtime_options,
     message_content_to_text,
     reset_llm_provider,
@@ -222,7 +223,7 @@ class LangGraphAgent(BaseAgent):
         self.graph = None
         self.model_override = model_override
         self.galileo_logger = galileo_logger
-        self.llm_provider = llm_provider if llm_provider in ("local", "hosted", "bedrock") else "local"
+        self.llm_provider = llm_provider if llm_provider in ("local", "hosted", "bedrock", "vllm") else "local"
         self.manage_trace_lifecycle = True
         self.control_ready = False
         
@@ -323,25 +324,9 @@ class LangGraphAgent(BaseAgent):
                 top_k = rag_config.get("top_k", 5)
                 # Use same model as main agent so RAG assistant appears with selected model in traces
                 model_config = self.domain_config.config.get("model", {})
-                if self.model_override:
-                    effective_model = self.model_override
-                elif self.llm_provider == "hosted":
-                    effective_model = (
-                        model_config.get("hosted_default_model")
-                        or model_config.get("default_model")
-                        or model_config.get("model_name")
-                    )
-                elif self.llm_provider == "bedrock":
-                    effective_model = (
-                        model_config.get("bedrock_default_model")
-                        or model_config.get("default_model")
-                        or model_config.get("model_name")
-                    )
-                else:
-                    effective_model = (
-                        model_config.get("default_model")
-                        or model_config.get("model_name")
-                    )
+                effective_model = self.model_override or get_provider_default_model(
+                    model_config, self.llm_provider
+                )
                 # Create LangChain retrieval chain tool (should work with GalileoCallback)
                 rag_tool = create_domain_rag_tool(
                     self.domain_config.name, top_k, model_name=effective_model
@@ -382,25 +367,9 @@ class LangGraphAgent(BaseAgent):
         
         # Get model configuration from domain config
         model_config = self.domain_config.config["model"]
-        if self.model_override:
-            effective_model = self.model_override
-        elif self.llm_provider == "hosted":
-            effective_model = (
-                model_config.get("hosted_default_model")
-                or model_config.get("default_model")
-                or model_config.get("model_name")
-            )
-        elif self.llm_provider == "bedrock":
-            effective_model = (
-                model_config.get("bedrock_default_model")
-                or model_config.get("default_model")
-                or model_config.get("model_name")
-            )
-        else:
-            effective_model = (
-                model_config.get("default_model")
-                or model_config.get("model_name")
-            )
+        effective_model = self.model_override or get_provider_default_model(
+            model_config, self.llm_provider
+        )
         temperature = model_config.get("temperature", 0.1)
         runtime_options = get_model_runtime_options(
             model_config, effective_model, self.llm_provider

@@ -56,7 +56,8 @@ DOMAIN = "cisco_se"
 DATASET_FILE = ROOT / "domains" / DOMAIN / "dataset.csv"
 SOURCES_FILE = ROOT / "domains" / DOMAIN / "dataset_sources.yaml"
 TOOL_SCHEMA_FILE = ROOT / "domains" / DOMAIN / "tools" / "schema.json"
-SCORER_LABELS = ("Ground Truth Adherence", "Context Adherence")
+# Scorers come from cisco_se experiments.metrics for the active backend profile
+# (splunkse: Ground Truth Adherence + Context Adherence; imlab-onprem: Luna CA).
 REQUIRED_TAGS = (
     "application_model", "model_provider", "api_mode", "reasoning_effort",
     "dataset_hash", "dataset_version", "code_version", "chaos_state", "run_id",
@@ -99,8 +100,8 @@ def parse_args(config: Dict[str, Any]) -> argparse.Namespace:
     parser.add_argument("--run-id", default=datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
                         help="Run identifier shared by both Experiments (default: UTC timestamp)")
     parser.add_argument("--preflight-only", action="store_true", help="Run all preflight checks only; create and run nothing")
-    parser.add_argument("--manifest-dir", default=str(ROOT / "data" / "cisco_se_ab_runs"),
-                        help="JSON run manifest directory (default: data/cisco_se_ab_runs)")
+    parser.add_argument("--manifest-dir", default=str(Path(os.environ.get("DEMO_DATA_DIR") or ROOT / "data") / "cisco_se_ab_runs"),
+                        help="JSON run manifest directory (default: $DEMO_DATA_DIR or data/, cisco_se_ab_runs)")
     parser.add_argument("--readback-timeout", type=int, default=900,
                         help="Seconds to wait for root Traces and Judge scores after each run (default: 900)")
     args = parser.parse_args()
@@ -149,12 +150,19 @@ def check_index_and_retrieval(config: Dict[str, Any]) -> Dict[str, Any]:
     return info
 
 
-def check_scorers() -> List[Dict[str, Any]]:
+def experiment_metrics(config: Dict[str, Any]):
+    from experiments.experiment_helpers import resolve_experiment_metrics
+
+    return resolve_experiment_metrics(config)
+
+
+def check_scorers(config: Dict[str, Any]) -> List[Dict[str, Any]]:
     from galileo.scorers import Scorers
 
-    found = api_call("List Scorers", lambda: Scorers().list_by_labels(list(SCORER_LABELS), strict=False))
+    labels = [metric.value for metric in experiment_metrics(config)]
+    found = api_call("List Scorers", lambda: Scorers().list_by_labels(labels, strict=False))
     result = []
-    for label in SCORER_LABELS:
+    for label in labels:
         match = next((s for s in found if s.label == label), None) or next((s for s in found if s.name == label), None)
         require(match is not None, f"Scorer {label!r}", "available" if match else "not available in this tenant")
         result.append({"label": label, "name": match.name, "id": str(match.id)})
@@ -361,7 +369,7 @@ def main() -> int:
     require(chaos == "off", "Chaos state", chaos)
     local = check_local_dataset(config, plan)
     index = check_index_and_retrieval(config)
-    scorers = check_scorers()
+    scorers = check_scorers(config)
     models = [check_model(m, config) for m in args.models]
     platform = check_platform(project, group, dataset_name, local["hash"], create=not args.preflight_only, config=config)
 
@@ -392,7 +400,6 @@ def main() -> int:
         print("\n✅ All preflight checks passed (nothing created or run).")
         return 0
 
-    from galileo.schema.metrics import GalileoMetrics
     from agent_factory import AgentFactory
     from experiments.experiment_helpers import run_domain_experiment
 
@@ -406,7 +413,7 @@ def main() -> int:
             t0 = time.monotonic()
             results = run_domain_experiment(
                 DOMAIN, name, platform["dataset"], factory,
-                metrics=[GalileoMetrics.ground_truth_adherence, GalileoMetrics.context_adherence],
+                metrics=experiment_metrics(config),
                 project=project, model_name=model, llm_provider="hosted",
                 experiment_group=group, experiment_tags={"run_id": args.run_id},
             )

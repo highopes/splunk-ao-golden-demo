@@ -17,12 +17,12 @@ from setup_env import get_domain_project_name
 from helpers.galileo_api_helpers import get_galileo_app_url
 from helpers.galileo_compat import tolerate_unknown_permission_actions
 from helpers.galileo_ingest import apply_domain_reliable_ingest, reliable_ingest_requested
-from helpers.llm_utils import describe_model_runtime, get_model_runtime_options
+from helpers.llm_utils import describe_model_runtime, get_model_runtime_options, get_provider_default_model
 
 # The tenant can return Project permission actions newer than the SDK enums.
 tolerate_unknown_permission_actions()
 
-# Default metrics for experiments
+# Default metrics for experiments on splunkse (unchanged).
 DEFAULT_METRICS = [
     GalileoMetrics.ground_truth_adherence,
     GalileoMetrics.prompt_injection,
@@ -34,6 +34,39 @@ DEFAULT_METRICS = [
 AVAILABLE_METRICS = {
     metric.value: metric for metric in DEFAULT_METRICS
 }
+
+
+def metric_from_name(name: str) -> GalileoMetrics:
+    """Resolve a GalileoMetrics enum name (``context_adherence_luna``) or label."""
+    text = str(name or "").strip()
+    for metric in GalileoMetrics:
+        if text in (metric.name, metric.value):
+            return metric
+    raise ValueError(f"Unknown experiment metric '{text}'")
+
+
+def resolve_experiment_metrics(
+    domain_config: Optional[dict] = None, profile: Optional[str] = None
+) -> List[GalileoMetrics]:
+    """Scorers for experiments: the domain's list for the active profile, else the profile default.
+
+    A domain may set ``experiments.metrics`` to a list (all profiles) or to a
+    mapping of backend profile -> list. On imlab-onprem the profile default
+    prefers Luna (SLM) scorers, which run on the local Wizard.
+    """
+    from setup_env import get_backend_profile
+
+    backend = get_backend_profile(profile)
+    configured = ((domain_config or {}).get("experiments") or {}).get("metrics")
+    if isinstance(configured, dict):
+        configured = configured.get(backend.name)
+    names = configured or list(backend.experiment_metrics)
+    return [metric_from_name(name) for name in names]
+
+
+def get_available_metrics(domain_config: Optional[dict] = None, profile: Optional[str] = None) -> Dict[str, GalileoMetrics]:
+    """UI metric choices (label -> metric) for the active backend profile."""
+    return {metric.value: metric for metric in resolve_experiment_metrics(domain_config, profile)}
 
 
 def read_dataset_csv(dataset_file: str) -> List[Dict[str, str]]:
@@ -94,10 +127,7 @@ def experiment_runtime_tags(
 ) -> Dict[str, str]:
     """Experiment tags describing the explicit application-model runtime settings."""
     model_cfg = domain_config.get("model", {})
-    model = model_name or {
-        "hosted": model_cfg.get("hosted_default_model"),
-        "bedrock": model_cfg.get("bedrock_default_model"),
-    }.get(llm_provider) or model_cfg.get("default_model")
+    model = model_name or get_provider_default_model(model_cfg, llm_provider)
     options = get_model_runtime_options(model_cfg, model, llm_provider)
     return {k: str(v) for k, v in describe_model_runtime(model, llm_provider, options).items()}
 
@@ -302,7 +332,8 @@ def run_domain_experiment(
         experiment_name: Name for the experiment
         dataset: Dataset object to use
         agent_factory: AgentFactory instance
-        metrics: List of metrics to evaluate (defaults to DEFAULT_METRICS)
+        metrics: List of metrics to evaluate (defaults to the domain/profile
+            selection from resolve_experiment_metrics)
         project: Galileo project name (defaults to GALILEO_PROJECT env var)
         model_name: Optional model override (e.g. from UI); uses domain default if None
         experiment_group: Optional Experiment Group name; defaults to the domain's
@@ -312,10 +343,9 @@ def run_domain_experiment(
     Returns:
         Experiment results
     """
-    if metrics is None:
-        metrics = DEFAULT_METRICS
-    
     cfg = DomainManager().load_domain_config(domain_name)
+    if metrics is None:
+        metrics = resolve_experiment_metrics(cfg.config)
     if project is None:
         project = get_domain_project_name(domain_name, cfg.config)
 
@@ -367,7 +397,7 @@ def run_domain_experiment(
         **run_kwargs,
     )
 
-    # Current splunkse Console routes runs under their experiment group. The
+    # The splunkse and on-prem Consoles route runs under their experiment group. The
     # SDK's legacy /experiments/{run_id} link opens an empty group page.
     if isinstance(results, dict) and results.get("experiment") is not None:
         experiment = results["experiment"]

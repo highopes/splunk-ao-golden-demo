@@ -1,0 +1,30 @@
+# Build context for the public image: code and synthetic domain data only.
+.git
+.gitignore
+.dockerignore
+.venv
+.venv.*
+.runtime
+.work
+.agent-context
+data
+.streamlit/secrets.toml
+.streamlit/secrets.toml.*
+!.streamlit/secrets.toml.example
+**/__pycache__
+**/*.py[cod]
+**/.DS_Store
+*.log
+.pytest_cache
+.mypy_cache
+.vscode
+.idea
+# Not needed at run time
+tests
+documentation
+deploy
+Dockerfile
+compose.yaml
+README.md
+requirements.uv-snapshot.txt
+uv.toml

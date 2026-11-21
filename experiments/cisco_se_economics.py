@@ -233,14 +233,43 @@ def _alias_matches(alias: str, candidates: Tuple[str, ...]) -> bool:
     return any(folded == c or folded.startswith(c) for c in candidates)
 
 
-def find_metric(record: Dict[str, Any], aliases: Tuple[str, ...]) -> Tuple[str, Dict[str, Any]]:
-    """Return (metric_id, metric_info) for the first scorer whose alias matches."""
+def _is_luna_alias(alias: str) -> bool:
+    folded = alias.casefold()
+    return "luna" in folded or "slm" in folded
+
+
+def prefer_luna_metrics(profile: Optional[str] = None) -> bool:
+    """True when the active backend profile evaluates with Luna (SLM) scorers first."""
+    from setup_env import get_backend_profile
+
+    try:
+        return get_backend_profile(profile).prefer_luna_metrics
+    except ValueError:
+        return False
+
+
+def find_metric(
+    record: Dict[str, Any], aliases: Tuple[str, ...], *, prefer_luna: Optional[bool] = None
+) -> Tuple[str, Dict[str, Any]]:
+    """Return (metric_id, metric_info) for the first scorer whose alias matches.
+
+    When both an LLM-judge scorer and its Luna (SLM) variant are present, the
+    active profile decides which one is reported (imlab-onprem: Luna first).
+    """
+    if prefer_luna is None:
+        prefer_luna = prefer_luna_metrics()
     matches = []
     for metric_id, raw in dict_value(record.get("metric_info")).items():
         info = dict_value(raw)
         if _alias_matches(str(info.get("metric_key_alias") or ""), aliases):
             matches.append((str(metric_id), info))
-    matches.sort(key=lambda item: (str(item[1].get("metric_key_alias") or ""), item[0]))
+
+    def order(item: Tuple[str, Dict[str, Any]]):
+        alias = str(item[1].get("metric_key_alias") or "")
+        luna_rank = 0 if _is_luna_alias(alias) == bool(prefer_luna) else 1
+        return (luna_rank, alias, item[0])
+
+    matches.sort(key=order)
     return matches[0] if matches else ("", {})
 
 

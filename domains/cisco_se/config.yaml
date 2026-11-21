@@ -20,6 +20,11 @@ experiments:
   group: "Cisco SE Model Economics"
   dataset_name: "Cisco SE Model Economics Dataset cisco-se-2026-10-21.v2"
   dataset_version: "cisco-se-2026-10-21.v2"
+  # Scorers per backend profile. Ground Truth Adherence has no Luna variant
+  # (LLM judge); on-prem Context Adherence runs as Luna (SLM) on the local Wizard.
+  metrics:
+    splunkse: ["ground_truth_adherence", "context_adherence"]
+    imlab-onprem: ["ground_truth_adherence", "context_adherence_luna"]
 
 # UI configuration
 ui:

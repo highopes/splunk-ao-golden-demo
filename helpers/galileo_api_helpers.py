@@ -1,8 +1,13 @@
 """
 Galileo API Helper Functions
 
-These helpers load only the API key and console URL from secrets.
+These helpers load only the API key and backend addresses from secrets.
 Domain-specific environment setup (like project names) is handled by the main app.
+
+REST base URL (GALILEO_REST_BASE_URL, set by setup_env.resolve_backend_settings):
+- splunkse: the Console UI proxy, ``<console>/api/galileo`` (unchanged behavior).
+- imlab-onprem: the API itself (``galileo_api_url``, e.g. an in-cluster service
+  address). The Console URL is then only used for browser links.
 """
 import requests
 import logging
@@ -17,7 +22,11 @@ def _load_secrets_if_needed():
     Only loads API key and console URL (not domain-specific settings).
     """
     # Check if already loaded
-    if os.environ.get("GALILEO_API_KEY") and os.environ.get("GALILEO_CONSOLE_URL"):
+    if (
+        os.environ.get("GALILEO_API_KEY")
+        and os.environ.get("GALILEO_CONSOLE_URL")
+        and os.environ.get("GALILEO_REST_BASE_URL")
+    ):
         return
     
     # Find secrets file
@@ -33,8 +42,16 @@ def _load_secrets_if_needed():
         if "galileo_api_key" in secrets and not os.environ.get("GALILEO_API_KEY"):
             os.environ["GALILEO_API_KEY"] = secrets["galileo_api_key"]
         
-        if "galileo_console_url" in secrets and not os.environ.get("GALILEO_CONSOLE_URL"):
-            os.environ["GALILEO_CONSOLE_URL"] = secrets["galileo_console_url"]
+        from setup_env import resolve_backend_settings
+
+        backend = resolve_backend_settings(secrets)
+        for key, value in (
+            ("GALILEO_CONSOLE_URL", backend["console_url"]),
+            ("GALILEO_API_URL", backend["api_url"]),
+            ("GALILEO_REST_BASE_URL", backend["rest_base_url"]),
+        ):
+            if value and not os.environ.get(key):
+                os.environ[key] = value
             
     except Exception as e:
         # TOML parse errors can quote a line containing a credential.
@@ -93,6 +110,34 @@ def get_galileo_api_key() -> str:
     return api_key
 
 
+def get_galileo_rest_base_url() -> str:
+    """Base URL for the REST helpers below (Console proxy for splunkse, API otherwise)."""
+    _load_secrets_if_needed()
+    explicit = os.environ.get("GALILEO_REST_BASE_URL", "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    return f"{get_galileo_app_url()}/api/galileo"
+
+
+def _rest_headers(api_key: str, rest_base_url: str) -> dict:
+    """Headers for REST calls; Console-proxy calls keep the browser-like headers."""
+    headers = {
+        "accept": "*/*",
+        "galileo-api-key": api_key,
+        "content-type": "application/json",
+    }
+    if rest_base_url.endswith("/api/galileo"):
+        console_url = get_galileo_app_url()
+        headers.update({
+            "origin": console_url,
+            "referer": f"{console_url}/",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-origin",
+            "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+        })
+    return headers
+
+
 def get_galileo_project_id(project_name: str, starting_token: int = 0, limit: int = 100) -> str:
     """
     Fetches the Galileo project ID for a given project name.
@@ -110,19 +155,10 @@ def get_galileo_project_id(project_name: str, starting_token: int = 0, limit: in
         requests.RequestException: If API request fails
     """
     api_key = get_galileo_api_key()
-    galileo_url = get_galileo_app_url()
-    
-    url = f"{galileo_url}/api/galileo/public/v2/projects/paginated?starting_token={starting_token}&limit={limit}"
-    headers = {
-        "accept": "*/*",
-        "galileo-api-key": api_key,
-        "content-type": "application/json",
-        "origin": galileo_url,
-        "referer": f"{galileo_url}/",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-origin",
-        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
-    }
+    rest_base_url = get_galileo_rest_base_url()
+
+    url = f"{rest_base_url}/public/v2/projects/paginated?starting_token={starting_token}&limit={limit}"
+    headers = _rest_headers(api_key, rest_base_url)
     data = {
         "sort": {
             "name": "updated_at",
@@ -174,20 +210,11 @@ def get_galileo_log_stream_id(project_id: str, log_stream_name: str) -> str:
         requests.RequestException: If API request fails
     """
     api_key = get_galileo_api_key()
-    galileo_url = get_galileo_app_url()
-    
-    url = f"{galileo_url}/api/galileo/v2/projects/{project_id}/log_streams"
-    headers = {
-        "accept": "*/*",
-        "galileo-api-key": api_key,
-        "content-type": "application/json",
-        "origin": galileo_url,
-        "referer": f"{galileo_url}/",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-origin",
-        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
-    }
-    
+    rest_base_url = get_galileo_rest_base_url()
+
+    url = f"{rest_base_url}/v2/projects/{project_id}/log_streams"
+    headers = _rest_headers(api_key, rest_base_url)
+
     response = requests.get(url, headers=headers, timeout=20)
     response.raise_for_status()
     log_streams = response.json()  # This is now a list of log streams

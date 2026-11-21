@@ -1,0 +1,10 @@
+apiVersion: v2
+name: splunk-ao-golden-demo
+description: >-
+  Splunk AO Golden Demo (Streamlit agent + tools + RAG) with PostgreSQL/pgvector.
+  An independent application that uses Splunk AO as its observability backend;
+  it never installs anything into the Splunk AO namespace.
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+home: https://github.com/highopes/splunk-ao-golden-demo
