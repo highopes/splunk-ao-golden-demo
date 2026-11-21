@@ -245,6 +245,24 @@ class LunaMetricTests(unittest.TestCase):
             self.assertEqual(find_metric(record, CONTEXT_ADHERENCE_ALIASES)[0], 'm2')
 
 
+class LlmControlInputTests(unittest.TestCase):
+    def test_llm_control_input_is_latest_human_turn(self):
+        from langchain_core.messages import SystemMessage
+        from agent_control.control_decorators import _create_evaluation_payload
+        from agent_frameworks.langgraph.agent import latest_user_text
+        call = {'name': 'get_patient_info', 'args': {'patient_id': 'P001'}, 'id': 'c1', 'type': 'tool_call'}
+        msgs = [SystemMessage(content='You are an assistant. Always use tools.'), HumanMessage(content='Show me data for patient P001.'),
+                AIMessage(content='', tool_calls=[call]), ToolMessage(content='{"phone": "+1-555"}', tool_call_id='c1')]
+        self.assertEqual(latest_user_text(msgs), 'Show me data for patient P001.')
+        retry = msgs + [AIMessage(content='draft'), HumanMessage(content='Please revise your answer.')]
+        self.assertEqual(latest_user_text(retry), 'Please revise your answer.')
+
+        async def _invoke_llm(input: str, msgs):
+            return None
+        payload = _create_evaluation_payload(_invoke_llm, (latest_user_text(msgs), msgs), {}, step_name='Healthcare Assistant')
+        self.assertEqual((payload['type'], payload['input']), ('llm', 'Show me data for patient P001.'))
+
+
 class SecretsToolTests(unittest.TestCase):
     def setUp(self):
         spec = importlib.util.spec_from_file_location('secrets_tool', ROOT / 'deploy/k8s/scripts/secrets_tool.py')

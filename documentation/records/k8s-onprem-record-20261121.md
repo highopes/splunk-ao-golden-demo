@@ -20,11 +20,11 @@
 
 | 项 | 状态 |
 | --- | --- |
-| 阶段 | 0 完成；1 进行中 |
-| 本仓库 HEAD（GitHub / Mac / `<OPS_NODE>` / `<BUILD_HOST>`） | `90602f3`（四处一致） |
+| 阶段 | 0、1、2 完成；3 进行中 |
+| 本仓库 HEAD（GitHub / Mac / `<OPS_NODE>` / `<BUILD_HOST>`） | `caa8953`（C1，四处一致） |
 | 镜像 | 未构建 |
 | 命名空间 `sao-golden` | 未创建 |
-| 未决事项 | 无 |
+| 未决事项 | Healthcare 15 样本 Experiment 在阶段 6 集群内验收（Mac 公网上行过慢） |
 
 ## 执行记录
 
@@ -83,3 +83,44 @@
 - 单元测试日志写到 OneDrive 同步目录中**同名**文件时被清空（退出码 120，内容丢失）；同样的测试输出到 `/tmp` 正常。原因：OneDrive 对快速重写的同名文件的同步干扰。处理：日志文件名一律带时间戳。
 - 卫生检查初版把 `agent_control_api_key_header`（键名含 key，值只是头名）当成密钥值造成误报；改为排除 `*_header` 键。
 - `[k8s]` 表最初按“必须在末尾”设计；实现上任意位置都能正确剥离，并以“剥离后重新解析应等于原内容去掉 k8s”作校验（多行字符串中含 `[k8s]` 文本时拒绝）。
+
+### 2026-11-21 阶段 2：On-prem 兼容性验证（执行者：Mac 上的 GitHub Copilot；21:35 开始，22:40 完成）
+
+执行方式：Mac 上 `cp .streamlit/secrets.toml.imlab-onprem .streamlit/secrets.toml` 后启动本地 App（经公网访问 AO），`<OPS_NODE>` 上只读查看 AO 日志；结束后已用 `secrets.toml.splunkse` 恢复。
+
+1. **预检**：`scripts/check-demo.sh --live`（imlab-onprem）：profile、地址推导、头名 `Splunk-AO-API-Key`、AO API `/healthcheck`、`/ingest/healthz`、Agent Control `/health`、5 个 hosted 模型均 PASS。首次运行时 Project/Log Stream 尚不存在（A5：首条 Trace 自动创建）；“SDK 原生 ingest 门”探测偶发 FAIL——SDK 探测超时固定 2 秒且结果按进程缓存，经公网偶尔超时；`check_demo.py` 改为清缓存重试一次（C1b）。
+2. **Trace 写入（原生 JSON 门）**：UI Healthcare 两例题（Lisinopril / P001）回答正确，自动创建 Project `splunk-ao-golden-demo` 与 Log Stream `healthcare`。ingress 访问日志：`POST /ingest/traces/<pid>`（→ ingest-service:8081，200，0.04–0.9 s）；没有 Legacy `POST /v2/projects/<pid>/traces`；session 调用 `POST /v2/projects/<pid>/sessions` 走 api（与官方 Observe Request Flow 一致）。
+3. **Agent Control（G2a ✅）**：SDK 8.11.0 对服务端 v0.5.30：`init` → 注册回读 → 运行时评估均正常（侧栏 “Agent Control connected”）；`Splunk-AO-API-Key` 与 `Galileo-API-Key` 两种头都可读回 Agent。**SDK 版本决定（A10）**：`galileo` 2.6.0、`agent-control-sdk` 8.11.0 保持不变。
+4. **Luna 指标盘点**：AO 共 94 个 scorer，其中文本类 SLM（Luna）17 个，归为 13 个指标族，与 Wizard 的 13 个 LoRA adapter（编号 1、3–14）一一对应：
+
+   | 指标族（Luna / SLM） | scorer 标签 | 演示场景 |
+   | --- | --- | --- |
+   | Context Adherence | Context Adherence (SLM) | RAG 回答是否忠于检索内容（幻觉） |
+   | Completeness | Completeness (SLM) | 回答是否覆盖检索到的要点 |
+   | Context Relevance | Context Relevance (SLM) | 检索结果与问题是否相关 |
+   | Chunk Relevance | Chunk Relevance (SLM) | 每个检索块是否有用 |
+   | PII | Input PII (SLM)、Output PII (SLM) | 患者电话/地址检出；POST Steer Control |
+   | Prompt Injection | Prompt Injection (SLM) | 注入攻击检出；PRE Deny Control |
+   | Toxicity | Input / Output Toxicity (SLM) | 有害内容 |
+   | Sexism | Input / Output Sexism (SLM) | 偏见内容 |
+   | Tone | Input / Output Tone (SLM) | 语气分类 |
+   | Tool Selection Quality | Tool Selection Quality (SLM) | Agent 是否选对工具 |
+   | Tool Error Rate | Tool Error Rate (SLM) | 工具调用是否出错（Chaos 演示） |
+   | Action Completion | Action Completion (SLM) | 会话级：用户目标是否完成 |
+   | Action Advancement | Action Advancement (SLM) | 每轮是否推进用户目标 |
+
+   AO API（scorer 定义）与 Wizard 日志 / Prometheus 指标都不暴露“adapter 编号 ↔ 指标”的对应，表中按指标族对应，不写编号。启用后实测出分（`healthcare` 启用 17 个、`cisco-se` 启用 9 个）：P001 的 Output PII 检出 `address, name, phone_number`；Prompt Injection 0.004；Action Advancement 0.905；Cisco SE span 级 Context Adherence (SLM) 0.984 / 0.531、Completeness 1.0、Tool Selection Quality 0.996、Tool Error Rate 0、Context Relevance 1.0、Chunk Relevance [1, 0, 0]。Wizard 当时累计 42 次 Luna 推理，平均 0.80 s/次（本地 L4）。
+5. **Controls（G2b，经用户决策后 ✅）**：新增 `scripts/setup_demo_controls.py`（按 profile 查 Luna scorer ID、幂等、按需启用/停用绑定），在 on-prem 创建 `splunk-ao-golden-demo-block-harmful-sql`（PRE Deny，`input.sql`）、`-block-output-pii`（POST Steer，Output PII (SLM)，`or` + 两个 `contains`）、`-block-prompt-injection`（PRE Deny，Prompt Injection (SLM) ≥ 0.80），绑定 `healthcare` Log Stream。
+   - **问题**：三条全部启用时，普通请求也被 Prompt Injection 拦截（“Show me data for patient P001.” 0.933、“Delete patient P001.” 0.894）。原因：LLM 步骤的 Control 输入是整段消息列表的字符串（系统提示词 + 历史 + 工具结果），on-prem Luna 对其给出高分。对照实测（`check_evaluation`，PRE）：只送用户本轮消息时普通问题 0.0001–0.04、Steer 重试提示 0.12、固定攻击 Prompt 0.9998；送 App 原载荷时普通问题 0.851。
+   - **决策（用户选择方案 A）**：App 侧让 LLM 步骤的 Control 输入只取最新一条用户消息（或 Steer / 工具修正提示）（`agent.py` 的 `latest_user_text()`，`_invoke_llm(input, msgs)`），两个后端一致，阈值保持 0.80；该 Control 不再检查系统提示词与工具返回内容（间接注入不在其范围）。放弃的方案：只在 on-prem 把阈值提到 0.95（普通 0.85–0.93 与攻击 0.9998 间余量过小）；改用 LLM 评判（偏离“Luna 优先”）；保持现状仅在演示时临时启用（存在误拦截）。
+   - **修改后实测**（三条全部启用）：P001 → PI 0.0056 放行 → Output PII 检出 address/name/phone → Steer → 重试 PI 0.063 放行 → 复检只剩 name → 回答不含电话/地址；Lisinopril → PI 0.00015，正常；删除 P001 → PI 0.040 放行 → SQL PRE Deny（`healthcare_patient` 仍 30 行、P001 仍在）；固定攻击 Prompt → PI 0.9998 PRE Deny，无模型调用，整条 Trace 1.0 s。结束后恢复标准演示状态：SQL 启用，PII / Injection 停用。
+6. **Dataset / Experiment**：`create_galileo_dataset.py healthcare` 建 Dataset（15 条）。Experiment 指标按 profile：Ground Truth Adherence（LLM 评判）+ Context Adherence / Prompt Injection / Completeness (SLM)。2 条样本的实验写入并出分（PI (SLM) 均值 0.001、GT Adherence 完成、CA/Completeness 为 span 级）。**15 条样本在 Mac 上未能写入**：SDK 在实验结束时一次性上传 15 条 Trace，`IngestTraces` 报错（信息为空）被 SDK 吞掉后仍显示“Successfully flushed”，集群 ingress 无此请求。原因：Mac 经公网的上行很慢（无凭据请求体对照：1 MB 用时 77 s），超过 SDK 60 s 超时。集群内直连 ingest-service 不受影响，15 条样本实验放到阶段 6 在集群内验收（这次排查中向公网入口发送了最大 8 MB 的无凭据请求体，用户指出没有必要，之后不再做这类测试）。
+7. **成本 / reliable_ingest**：on-prem 价格表包含 `gpt-5.4-nano`、`gpt-5-nano`、`gpt-6.1-sol`，LLM Span `cost > 0`、`cost_status=success`，且这些 Trace 均**未**启用 `reliable=True`。结论：on-prem 的原生门写入即可计价，splunkse 的 `reliable_ingest` 变通在 on-prem 不需要（Cisco SE 配置保留，无害）。Cisco SE 双模型各 1 题均正确作答（Project `splunk-ao-golden-demo-cisco-se` 自动创建）。
+8. **Console 深链**：`<console>/project/{pid}/log-streams/{sid}` 与 `<console>/project/{pid}/experiments/{group}/{id}` 在 on-prem 均可直接打开（Console 自动重定向到 `/<org-slug>/project/...`），代码无需修改。
+9. **结论**：现有插桩（`GalileoCallback` + `GalileoLogger`）经原生 JSON ingest 门写入 on-prem，**无需改 OTLP**；SDK 版本不升级；Luna 指标与三条 Control 可用。
+
+**其他问题与处理**：
+- Mac 上 App 的 stdout 重定向到 OneDrive 同步目录内的日志文件时，写入会阻塞并报 `TimeoutError: [Errno 60]`，表现为页面 “Invalid secrets configuration”（`print()` 失败）和删除请求 “Error processing your request: [Errno 60] Operation timed out”。处理：App 运行日志写到 `/tmp`；`setup_env.py` 的通用错误信息附带异常类型名与栈帧位置（不含任何值），便于以后定位。
+- `.runtime/postgres` 中 81 个 PG 数据文件被 OneDrive 驱逐为 dataless（Mac 既有布局，本次未改动）。
+
+**C1b 改动**：`agent_frameworks/langgraph/agent.py`（方案 A）、`scripts/setup_demo_controls.py`（新）、`scripts/check_demo.py`（探测重试）、`setup_env.py`（错误诊断信息）、`tests/test_onprem_k8s.py`（+1：LLM Control 输入为最新用户消息）。

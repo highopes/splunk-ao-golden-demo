@@ -96,6 +96,20 @@ def _message_content_text(message: BaseMessage) -> str:
     return str(content)
 
 
+def latest_user_text(messages: List[BaseMessage]) -> str:
+    """Text of the latest human turn: the user's question, or a steering/tool-correction prompt.
+
+    This is the LLM step's Agent Control input. PRE controls such as Prompt
+    Injection (SLM) then score what the user (or a correction) said, not the
+    system prompt, history or tool results; whole-payload scoring flagged
+    ordinary questions on Splunk AO On-prem (0.85-0.93 vs 0.0001-0.04).
+    """
+    for message in reversed(list(messages)):
+        if isinstance(message, HumanMessage):
+            return _message_content_text(message)
+    return ""
+
+
 def _tool_content_text(content: Any) -> str:
     """Return plain text from ToolMessage content (str or multimodal blocks)."""
     if isinstance(content, str):
@@ -394,8 +408,10 @@ class LangGraphAgent(BaseAgent):
         llm_step_name = f"{self.domain_config.name.title()} Assistant"
         last_llm_output: Dict[str, Any] = {"message": None}
 
+        # Agent Control's LLM step input is the "input" argument (latest human
+        # turn); msgs is the full conversation sent to the model.
         @control(step_name=llm_step_name)
-        async def _invoke_llm(msgs):
+        async def _invoke_llm(input: str, msgs):
             result = await llm_with_tools.ainvoke(msgs)
             last_llm_output["message"] = result
             # print(f"--> LLM output: {result}", flush=True)
@@ -439,7 +455,7 @@ class LangGraphAgent(BaseAgent):
 
             for _attempt in range(remaining_attempts):
                 try:
-                    message = await _invoke_llm(llm_messages)
+                    message = await _invoke_llm(latest_user_text(llm_messages), llm_messages)
                     break
                 except ControlViolationError as e:
                     notify_control_block(e, step_name=llm_step_name)

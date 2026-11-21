@@ -346,7 +346,15 @@ def setup_environment(domain_name: Optional[str] = None, domain_config: Optional
         raise ValueError(f"Invalid secrets configuration: {e}") from None
     except Exception as e:
         # Do not include TOML parse errors: they can contain a secret line.
-        raise ValueError("Invalid secrets configuration; check the local TOML file and backend_profile") from None
+        # Frame locations (file:line function) never contain values.
+        import sys
+        import traceback
+
+        for frame in traceback.extract_tb(e.__traceback__)[-6:]:
+            print(f"   at {Path(frame.filename).name}:{frame.lineno} {frame.name}", file=sys.stderr)
+        raise ValueError(
+            f"Invalid secrets configuration ({type(e).__name__}); check the local TOML file and backend_profile"
+        ) from None
 
 
 if __name__ == "__main__":

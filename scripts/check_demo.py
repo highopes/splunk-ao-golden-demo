@@ -136,10 +136,16 @@ def main():
         check("AO ingest /ingest/healthz", http_status(f"{ingest_base}/ingest/healthz") == 200, ingest_base.split("://")[-1].split("/")[0])
         check("Agent Control /health", http_status(f"{backend['agent_control_url']}/health") == 200)
         try:
+            import importlib
             from helpers.galileo_ingest import configure_ingest_url
             from galileo import GalileoLogger
             configure_ingest_url(backend["ingest_url"])
-            check("SDK uses the native ingest door", GalileoLogger._is_ingest_service_available())
+            native = GalileoLogger._is_ingest_service_available()
+            if not native:
+                # The SDK probe has a fixed 2 s timeout and caches the result; retry once.
+                importlib.import_module("galileo.logger.logger")._ingest_service_cache.clear()
+                native = GalileoLogger._is_ingest_service_available()
+            check("SDK uses the native ingest door", native)
         except Exception as exc:
             check("SDK uses the native ingest door", False, type(exc).__name__)
     if args.live and "galileo_api_key" not in failures:
