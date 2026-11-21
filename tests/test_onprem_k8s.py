@@ -265,7 +265,10 @@ class LlmControlInputTests(unittest.TestCase):
 
 class SecretsToolTests(unittest.TestCase):
     def setUp(self):
-        spec = importlib.util.spec_from_file_location('secrets_tool', ROOT / 'deploy/k8s/scripts/secrets_tool.py')
+        path = ROOT / 'deploy/k8s/scripts/secrets_tool.py'
+        if not path.is_file():
+            self.skipTest('deploy/ tooling is not part of the app image')
+        spec = importlib.util.spec_from_file_location('secrets_tool', path)
         self.tool = importlib.util.module_from_spec(spec); spec.loader.exec_module(self.tool)
 
     def test_k8s_table_is_removed_from_app_secret(self):
