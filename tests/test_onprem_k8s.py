@@ -263,6 +263,15 @@ class LlmControlInputTests(unittest.TestCase):
         self.assertEqual((payload['type'], payload['input']), ('llm', 'Show me data for patient P001.'))
 
 
+class CheckDemoTests(unittest.TestCase):
+    def test_preflight_runs_to_missing_secrets_without_crashing(self):
+        spec = importlib.util.spec_from_file_location('check_demo', ROOT / 'scripts/check_demo.py')
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as root, patch.object(module, 'ROOT', Path(root)), \
+                patch('sys.argv', ['check_demo.py', '--in-cluster']), patch('builtins.print'):
+            self.assertEqual(module.main(), 1)
+
+
 class SecretsToolTests(unittest.TestCase):
     def setUp(self):
         path = ROOT / 'deploy/k8s/scripts/secrets_tool.py'

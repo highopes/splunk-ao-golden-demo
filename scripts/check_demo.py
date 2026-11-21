@@ -136,7 +136,6 @@ def main():
         check("AO ingest /ingest/healthz", http_status(f"{ingest_base}/ingest/healthz") == 200, ingest_base.split("://")[-1].split("/")[0])
         check("Agent Control /health", http_status(f"{backend['agent_control_url']}/health") == 200)
         try:
-            import importlib
             from helpers.galileo_ingest import configure_ingest_url
             from galileo import GalileoLogger
             configure_ingest_url(backend["ingest_url"])
