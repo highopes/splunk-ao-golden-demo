@@ -223,3 +223,26 @@ Splunk `perc95` 与导出器 nearest-rank P95 在小样本上可能略有差异�
 写入后 `csv.DictReader` 回读：header 与本契约完全一致；必填列非空；`(experiment_id, trace_id)` 无重复；整数/浮点/布尔列类型正确且为有限数；`token_source` 取值合法；没有未转义换行；`comparison_ready=1` 的行必须有成本与成功评分；回读行数等于写入行数。任一失败都不替换旧文件，并以非零退出码结束。
 
 单元测试（`tests/test_cisco_se_domain.py`，mock 数据仅用于自动化测试）覆盖：分页（token / offset / 去重）、有限重试、重复 Trace、模型缺失或不一致、成本 null / 0、Judge pending / failed、Context Adherence 取最终回答 LLM Span、Dataset 版本不一致、Chaos、Agent 错误、原子写入失败保留旧文件、P95 与跨模型配对。
+
+## 8. Splunk AO On-prem（`imlab-onprem`）上的差异（2026-11-21）
+
+CSV 列与校验规则不变（69 列）；不同的是指标来源、评判模型与成本口径：
+
+| 项 | `splunkse` | `imlab-onprem` |
+|---|---|---|
+| Context Adherence | 平台 LLM 评判 `context_adherence` | **Luna（SLM）** `context_adherence_luna`，在 AO 的 Wizard（本地 GPU）上运行；`domains/cisco_se/config.yaml` 的 `experiments.metrics.imlab-onprem` 选择它。同一 Span 上两种版本都存在时，导出器按 profile 优先取 Luna（`prefer_luna_metrics`），取值规则仍是“最终回答 LLM Span” |
+| `context_adherence_cost_usd` | 平台返回的评分费用 | Luna 不按 Token 计费，通常为空（文本摘要显示 `n/a`） |
+| Ground Truth Adherence | 平台 LLM 评判 | 仍为平台 LLM 评判；评判模型由 AO 管理员配置。2026-11-21 实测 `judge_model=Qwen/Qwen3-14B-FP8`（集群内模型），`judge_cost_usd=0`；评判比 SaaS 慢，A/B 脚本等待回读最多 900 s |
+| 应用成本 `trace_cost_usd` | 需要 `galileo.reliable_ingest: true` 才计价 | AO 自身的价格表已包含 `gpt-5-nano`、`gpt-6.1-sol`、`gpt-5.4-nano`；实测 `comparison_ready` 全部为 1、`token_source=trace` |
+| 输出位置 | `data/`（Git 忽略） | 容器内由 `DEMO_DATA_DIR`（`/data`，emptyDir）决定；运行后用 `kubectl cp` 取回到运维节点工作目录的 `.work/`（Pod 重建后 `/data` 清空） |
+
+集群内运行：
+
+```bash
+kubectl -n sao-golden exec deploy/sao-golden-app -c app -- python scripts/run_cisco_se_ab.py
+kubectl -n sao-golden exec deploy/sao-golden-app -c app -- python scripts/export_cisco_se_economics.py
+P=$(kubectl -n sao-golden get pod -l app.kubernetes.io/component=app -o name | head -1 | cut -d/ -f2)
+kubectl -n sao-golden cp -c app "$P":/data/cisco_se_model_economics.csv .work/cisco_se_model_economics-k8s-$(date +%Y%m%d).csv
+```
+
+不同后端的 CSV 不要合并比较：评判模型、Context Adherence 版本（LLM vs SLM）与价格表都不同。

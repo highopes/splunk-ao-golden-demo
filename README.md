@@ -6,6 +6,8 @@
 
 **当前有验收记录的标准环境：macOS / Healthcare / OpenAI / splunkse。** 2026-10-06 已完成应用与 Console 的连续排练、Reset 后复演、15 样本 Experiment、三个 Control 和核心故障注入；Bank 的切换与 9 样本 Experiment 也已通过，24 项回归通过。详见 [验收记录](documentation/VALIDATION.md)。这些是既有验证结果；新机器、新模型或新配置仍需按本手册检查。
 
+**2026-11-21 新增第二套已验收环境：Kubernetes（机房集群）/ Splunk AO On-prem（profile `imlab-onprem`）/ Luna SLM 评估。** 应用以容器部署在自己的命名空间，经 Basic Auth 对外提供；在集群内只经 AO 内部服务地址访问 AO，评估与 Control 以本地 GPU 上的 Luna 小模型为主，并可选集群内 Qwen 作为应用模型。Golden Demo 是独立应用，只是 AO 的使用者（共用 AO 平台的 ingress 与域名入口），不属于 AO。安装运维见 [KUBERNETES.md](documentation/KUBERNETES.md)，演示见 [5.9](#luna-onprem-demo)，验收见 [VALIDATION.md](documentation/VALIDATION.md)。
+
 本 README 是安装、启用、维护和演示的操作手册。所有患者、客户、电话、地址及业务记录都是合成演示数据（synthetic demo data）；药物知识用于演示检索和评测。
 
 ## 按当前任务阅读
@@ -20,7 +22,11 @@
 | 演示双模型质量 / 成本对比，导出 CSV | [5.6 Cisco SE Model Economics](#cisco-se-economics)；Domain 建立过程见 [4.2](#new-domain) |
 | 理解架构、插桩与运行原理 | [6. 架构与原理](#architecture) |
 | 解决启动或演示问题 | [7. 排障](#troubleshooting) |
-| 查看未来 Kubernetes 安装位置 | [2.2 Kubernetes（预留）](#install-kubernetes) |
+| **K8s / On-prem**：部署前人工准备（Docker Hub 令牌、AO API Key、填写配置） | [KUBERNETES.md 第 2 节](documentation/KUBERNETES.md#2-部署前人工准备必须由人完成) |
+| K8s：构建镜像、部署、升级回退 | [2.2](#install-kubernetes) → [KUBERNETES.md 第 4、6 节](documentation/KUBERNETES.md#4-安装可完整手工复现) |
+| K8s：日常启停、演示前检查 | [KUBERNETES.md 第 5、9 节](documentation/KUBERNETES.md#5-日常启停) |
+| K8s / On-prem 演示（Luna 本地评估、Qwen） | [5.9 本地化 Luna 演示](#luna-onprem-demo) |
+| K8s / On-prem 排障 | [KUBERNETES.md 第 10 节](documentation/KUBERNETES.md#10-排障)；[7. 排障](#troubleshooting) 末尾几行 |
 
 命令默认在**本仓库根目录**执行。文中的 `python` 指已激活的项目 `.venv`；如果没有激活，用 `.venv/bin/python`。应用页面在本机 `127.0.0.1:8501`，Console 是远程服务，两者都需要打开。
 
@@ -50,16 +56,19 @@
 
 ### 1.2 当前支持环境
 
-| 项目 | 当前配置 |
-|---|---|
-| 应用端 | macOS；本机 `127.0.0.1:8501` |
-| Python | 3.12；锁定依赖在 `requirements.lock.txt` |
-| PostgreSQL / pgvector | 本机原生 PostgreSQL 17 + pgvector；另保留上游 Docker PG16 方式 |
-| Primary LLM | 上游已支持的 Hosted (OpenAI)，四个行业默认 `gpt-5.4-nano`（`reasoning_effort: none`，低时延、低成本）；`gpt-4o` 仍在下拉列表中 |
-| Embedding | `text-embedding-3-large`，768 维，provider 独立 collection |
-| Backend profile | 仅 `splunkse` |
-| Console | `https://console.multitenant.galileocloud.io/splunkse` |
-| Evaluator | 租户原生默认 Evaluator；与应用 OpenAI Key 分开管理；当前不创建本地 Judge |
+| 项目 | macOS + SaaS（`splunkse`） | Kubernetes + On-prem（`imlab-onprem`，2026-11-21 新增） |
+|---|---|---|
+| 应用端 | macOS；本机 `127.0.0.1:8501` | 容器镜像 `<dockerhub-user>/sao-golden:<版本>-<sha>`（amd64，Public）；Helm release 与命名空间 `sao-golden`；1 副本；外网 `https://golden.<AO 域名>` 经 Basic Auth |
+| Python | 3.12；锁定依赖在 `requirements.lock.txt` | 同左（镜像 `python:3.12-slim` 固定 digest，`uv` 按锁文件安装） |
+| PostgreSQL / pgvector | 本机原生 PostgreSQL 17 + pgvector；另保留上游 Docker PG16 方式 | 集群内 StatefulSet `pgvector/pgvector:pg17`，PVC 5Gi |
+| Primary LLM | 上游已支持的 Hosted (OpenAI)，四个行业默认 `gpt-5.4-nano`（`reasoning_effort: none`，低时延、低成本）；`gpt-4o` 仍在下拉列表中 | 同左；另可选 **vLLM (Qwen)**：集群内 OpenAI 兼容服务 `Qwen/Qwen3-14B-FP8`（应用侧 Hermes 工具调用适配，见 [6.6](#onprem-architecture)） |
+| Embedding | `text-embedding-3-large`，768 维，provider 独立 collection | 同左（OpenAI） |
+| Backend profile | `splunkse` | `imlab-onprem` |
+| Console | `https://console.multitenant.galileocloud.io/splunkse` | `https://console.<AO 域名>`（无租户路径；只用于浏览器链接） |
+| AO 访问地址 | 由 Console 地址推导 | 集群内：`api` / `ingest-service` / `agent-control` 的 `*.galileo.svc.cluster.local` 内部地址 + AO 内部 CA；笔记本：由 Console 地址推导的公网地址 |
+| Evaluator | 租户原生默认 Evaluator；与应用 OpenAI Key 分开管理；当前不创建本地 Judge | **Luna（SLM）指标为主**：在 AO 的 Wizard（本地 GPU）上运行；Ground Truth Adherence 没有 Luna 版本，由平台 LLM 评判（本 On-prem 的评判模型为集群内 Qwen3-14B-FP8，不出机房、不计费） |
+| Control 评估 | Prompt Injection / PII 为 SLM scorer（云端） | 同一套 Luna SLM scorer，在本地 GPU 上执行；Control 请求头 `Splunk-AO-API-Key` |
+| 已验证的服务端版本 | SaaS（随租户） | AO api v1.1274.0、Agent Control v0.5.30；客户端 `galileo` 2.6.0、`agent-control-sdk` 8.11.0 |
 
 依赖包括 Streamlit、Galileo、Agent Control SDK 8、LangChain、LangGraph、LangChain PostgreSQL、psycopg。`requirements.txt` 受锁文件约束；验证版本与状态见验收记录。上游未使用的 yfinance、alpha-vantage、Chroma 以及 PDF/ML 重依赖移出默认安装；非 CSV 自定义 Domain 如需文件解析，可额外安装 `requirements-optional.txt`。
 
@@ -220,11 +229,16 @@ git check-ignore .streamlit/secrets.toml .venv .runtime
 
 <a id="install-kubernetes"></a>
 
-### 2.2 Kubernetes（预留）
+### 2.2 Kubernetes（机房集群 + Splunk AO On-prem）
 
-**计划中，当前未实现、未验收。** 未来社区 Kubernetes 的安装步骤放在这里；当前没有应用容器镜像构建流程、Helm、Deployment 或 Ingress 安装清单。`compose.yaml` 只启动本机数据库，不是 Kubernetes 部署方案。
+**2026-11-21 已实现并验收**（[验收记录](documentation/VALIDATION.md#onprem-k8s)）。完整的安装、运维与排障在 **[documentation/KUBERNETES.md](documentation/KUBERNETES.md)**，这里只说明定位与流程：
 
-未来需要补齐镜像与依赖、Secret 管理、PostgreSQL/pgvector 与持久卷、初始化 Job、服务与访问入口、启停/升级/备份，以及独立的端到端验收。当前请使用 macOS 流程。
+- **独立应用**：Golden Demo 不是 Splunk AO 的组成部分，只是 AO 的使用者，并共用 AO 平台的 ingress-nginx 控制器与 `*.<AO 域名>` 公网入口。本应用的代码、配置、凭据、证书、Basic Auth 账号、脚本与文档都在本仓库、本应用工作目录和命名空间 `sao-golden` 中；AO 的仓库、工作目录与 `galileo` 命名空间中没有本应用的任何东西（只读取 AO 内部 CA 的公钥 ConfigMap）。
+- **部署单元**：App（Streamlit + Agent + Tools + RAG，同一进程，1 副本）、PostgreSQL/pgvector（StatefulSet + PVC）、认证服务（Basic Auth，供 ingress 的 `auth-url` 调用）、按需执行的数据初始化 Job。由 Helm chart [`deploy/helm/splunk-ao-golden-demo`](deploy/helm/splunk-ao-golden-demo) 安装。
+- **流程**：部署前人工准备（[KUBERNETES.md 第 2 节](documentation/KUBERNETES.md#2-部署前人工准备必须由人完成)）→ 在构建主机 `deploy/k8s/build/build-image.sh all|push` → 在运维节点依次执行 `deploy/k8s/scripts/10-prepare-namespace.sh`、`20-deploy.sh <标签>`、`30-init-data.sh`、`40-verify.sh`。
+- **配置**：仍然只有一个 `.streamlit/secrets.toml`（集群版多一个只供部署脚本读取的 `[k8s]` 表），见 [3.1](#first-config)。
+
+`compose.yaml` 仍只用于在本机启动数据库，不是 Kubernetes 部署方案。
 
 <a id="enable"></a>
 
@@ -273,7 +287,7 @@ Console 根地址自动推导 API 地址、Control 地址和 `/splunkse` 登录�
 # agent_control_url = "https://console.multitenant.galileocloud.io/api/agent-control"
 ```
 
-`agent_control_api_key_header` 是固定的 **HTTP 头名称**；头值自动使用 `galileo_api_key`，不要在这个字段里填 Key。API / Control 地址不加 `/splunkse` 后缀。`backend_profile` 当前只接受 `splunkse`。修改 secrets 后重启 Streamlit。
+`agent_control_api_key_header` 是固定的 **HTTP 头名称**；头值自动使用 `galileo_api_key`，不要在这个字段里填 Key。API / Control 地址不加 `/splunkse` 后缀。`backend_profile` 可取 `splunkse`（默认）或 `imlab-onprem`，见下文“多个后端”。修改 secrets 后重启 Streamlit。
 
 Project 和 stream 在每个 Domain 的 YAML 中配置，无需再写入 secrets：
 
@@ -286,6 +300,30 @@ Project 和 stream 在每个 Domain 的 YAML 中配置，无需再写入 secrets
 | 同上 | `galileo.log_stream` | Healthcare 为 `healthcare`，其他按行业分流 |
 
 先在 Console 确认有对应 GenAI Project 与 stream，或允许 SDK 创建。不同 Domain 默认共用一个 Project，各有独立 Log Stream。Session/Trace/Span 不会仅因为上传 Key 存在就证明入库成功；要实际查看 Console 的最新输入与时间。
+
+<a id="backend-profiles"></a>
+
+#### 多个后端：`secrets.toml.<后端>` 与 profile
+
+凭据与配置**只写在一个文件** `.streamlit/secrets.toml` 中（格式见 [`secrets.toml.example`](.streamlit/secrets.toml.example)），不另建其他配置文件。需要在多个后端之间切换时，把各后端的版本按文件名保存在同一目录（`secrets.toml.*` 已被 Git 忽略），当前使用哪个就复制为 `secrets.toml`，然后重启 App：
+
+```bash
+cp .streamlit/secrets.toml.splunkse      .streamlit/secrets.toml   # SaaS（splunkse）
+cp .streamlit/secrets.toml.imlab-onprem  .streamlit/secrets.toml   # 笔记本经公网使用 On-prem
+# secrets.toml.imlab-onprem-k8s：集群版，放到运维节点的工作目录后命名为 secrets.toml
+```
+
+| 项 | `splunkse` | `imlab-onprem` |
+|---|---|---|
+| `galileo_console_url` | 默认 SaaS 根地址；登录入口自动加 `/splunkse` | **必填**，如 `https://console.<AO 域名>`；无租户路径 |
+| API 地址 | 由 Console 推导；REST 经 Console 代理 | 由 Console 推导为 `api.<AO 域名>`，或在集群内显式写 `galileo_api_url` |
+| Trace 写入 | SDK 默认门 | 原生 JSON ingest 门；集群内用 `galileo_ingest_url` 指向 ingest-service |
+| Agent Control | `<console>/api/agent-control`，头 `Galileo-API-Key` | `<api>/agent-control`，或集群内 `agent_control_url`；头默认 `Splunk-AO-API-Key`（`Galileo-API-Key` 也可） |
+| Experiment 指标 | Ground Truth Adherence、Prompt Injection、Context Adherence | Ground Truth Adherence + `context_adherence_luna`、`prompt_injection_luna`、`completeness_luna`（Domain YAML 可按 profile 覆盖，例如 `domains/cisco_se/config.yaml`） |
+
+集群内的完整键表与 `[k8s]` 表见 [KUBERNETES.md 第 3 节](documentation/KUBERNETES.md#3-配置唯一的-secretstoml)。可选的集群内 Qwen 模型：填写 `vllm_base_url`（OpenAI 兼容的 `/v1` 地址）与 `vllm_default_chat_model`，页面的 provider 下拉中会出现 **vLLM (Qwen3-14B-FP8)**（括号内为模型名）；embedding 仍用 OpenAI。
+
+**在 On-prem Console 新建应用专用 API Key**：以管理员登录 `https://console.<AO 域名>` → **API Keys** → 新建，名称如 `golden-demo`，范围选**组织级**（不要限定项目；Agent Control 需要组织级 Key），复制后只在编辑器中填入 `galileo_api_key`。每个使用 AO 的应用各用自己的 Key，便于轮换与审计。
 
 ### 3.2 启动本项目数据库
 
@@ -408,6 +446,24 @@ App → **Experiments → Dataset Setup → Create from Sample Test Data**，展
 保存返回的 Dataset ID，打开 Dataset 链接核对 `input` 和参考 `output`。以后用 **Select Existing Dataset by Name / by ID → Load Dataset**，不必每次创建。按[标准 Experiment 步骤](#standard-demo)至少完成一次 15 样本运行及评分。
 
 **首次启用完成标志：** 本地预检和 live 预检通过；两类真实问题可回答且有 Trace；适用原生评分已完成；SQL 有真实 PRE Deny；计划演示的 PII / Injection 已排练；Dataset 与完整 Experiment 可查看。新环境达不到的环节先排障，不直接沿用旧环境的 Demo-ready 标签。
+
+<a id="onprem-enable"></a>
+
+#### On-prem（`imlab-onprem`）上的差异
+
+- **Evaluator 用 Luna（SLM）**：在 Console 的 Log Stream 上启用 Luna 版本的指标（如 Context Adherence (SLM)、Completeness (SLM)、Prompt Injection (SLM)、PII、Toxicity、Tone 等），它们在 AO 的 Wizard（本地 GPU）上运行，不消耗外部 LLM 额度、数据不出机房。Ground Truth Adherence 没有 Luna 版本，仍由平台的 LLM 评判。Trace 根上的 Context Adherence / Completeness 显示为 roll-up，分数在 LLM Span 上。
+- **三条 Control 用脚本建立**（幂等，不必手工在 Console 填表）：
+
+  ```bash
+  python scripts/setup_demo_controls.py                              # 创建/更新三条 Control 并绑定到 healthcare stream；SQL 启用
+  python scripts/setup_demo_controls.py --bindings-only --enable sql            # 恢复标准状态
+  python scripts/setup_demo_controls.py --bindings-only --enable sql,pii        # 深入演示 PII
+  python scripts/setup_demo_controls.py --bindings-only --enable sql,injection  # 深入演示 Prompt Injection
+  ```
+
+  集群内在 Pod 中执行：`kubectl -n sao-golden exec deploy/sao-golden-app -c app -- python scripts/setup_demo_controls.py …`。PII 用 Luna 的 `pii` scorer（`or` + 两个 `contains`），Prompt Injection 用 `prompt_injection` scorer（阈值 0.80）。
+- **LLM 步骤 Control 的输入只取最新一条用户消息**：Prompt Injection 若检查包含系统提示词的完整消息列表，Luna 会把系统提示词中的指令性文字判为注入（On-prem 实测普通问题 0.85–0.93）。现在 `@control` 的输入参数是最新用户消息，完整消息列表另行传给模型（见 [6.6](#onprem-architecture)）。两套后端行为一致。
+- **Dataset 与 Experiment**：方法同上；集群内也可在 Pod 中运行 `python experiments/run_experiment.py healthcare --provider hosted`。
 
 <a id="daily-start"></a>
 
@@ -713,6 +769,23 @@ secrets 的备份单独安全保存。`pg_dump` 不包含云端 Trace、Dataset�
 5. 做依赖检查、适用回归、live 预检和一次完整 UI 排练；有新失败时先定位，再更新验收记录。
 
 回归入口和验证范围见[架构备注](#architecture-notes)。只有文档变更通常核对命令、链接与代码即可；实际改运行配置、依赖或工具后，应进行对应验证。
+
+<a id="k8s-maintenance"></a>
+
+### 4.6 Kubernetes 部署的维护（摘要）
+
+详细步骤见 [KUBERNETES.md](documentation/KUBERNETES.md)。要点：
+
+| 任务 | 做法 |
+| --- | --- |
+| 发布新版本 | 提交推送 → 构建主机 `git pull` → `bash deploy/k8s/build/build-image.sh all <镜像>` → `push`（标签为 `<版本>-<git 短 SHA>`，不用 `latest`）→ 运维节点 `git pull` → `bash deploy/k8s/scripts/20-deploy.sh <标签>` → `40-verify.sh` |
+| 回退 | `bash deploy/k8s/scripts/90-rollback.sh [revision]`（`helm rollback`；数据与 Secret 不变） |
+| 改配置 / 换 Key / 改 Basic Auth 密码 | 编辑运维节点上的 `secrets.toml` → `10-prepare-namespace.sh` → `20-deploy.sh <当前标签>`（配置校验和变化会自动滚动重启） |
+| 停止 / 启动 | `kubectl -n sao-golden scale deploy/sao-golden-app --replicas=0` / `=1`（PostgreSQL 与数据保留） |
+| 重建数据 | `bash deploy/k8s/scripts/30-init-data.sh [domain…]`（会重新计费 embedding） |
+| 改动 Ingress 注解或认证 | 先把 App 缩到 0，确认无凭据请求不是 200，再放出 App（[KUBERNETES.md 第 6 节](documentation/KUBERNETES.md#6-升级与回退)） |
+
+代码改动在 Mac 上照常回归；改动 Dockerfile、Helm chart 或部署脚本后，还要在构建主机执行 `build-image.sh all`（容器内冒烟 + 镜像卫生检查），并在集群中跑 `40-verify.sh`。本仓库为 Public，推送前执行 `bash scripts/check-public-hygiene.sh`。
 
 <a id="demo"></a>
 
@@ -1156,6 +1229,41 @@ Domain 结构与命令见 [4.2 Cisco SE 实例](#cisco-se-domain)；当前验收
 5. Dataset、Experiment 与 Trace 保留在租户。日常 Reset 不删除这些证据；按团队命名/保留约定手动清理，不删除其他用户的资源。
 6. 按[正常关闭](#daily-start)停止应用和项目数据库；下次 `start-demo.sh` 会自动启动数据库并复用数据。
 
+集群部署（`imlab-onprem`）：第 1 步用 `kubectl -n sao-golden exec deploy/sao-golden-app -c app -- python scripts/setup_demo_controls.py --bindings-only --enable sql`；App 一般不停（如需停止见 [KUBERNETES.md 第 5 节](documentation/KUBERNETES.md#5-日常启停)）。
+
+<a id="luna-onprem-demo"></a>
+
+### 5.9 本地化 Luna 演示（Kubernetes + Splunk AO On-prem，新增）
+
+适用于集群部署的 `imlab-onprem` 环境（`https://golden.<AO 域名>`，Basic Auth 登录；Console 另开标签页）。主线与 [5.3](#standard-demo) / [5.4](#deep-demo) 相同，只是把“评估与控制在哪里运行”作为卖点：**Luna 小模型在机房 GPU 上完成指标打分与运行时 Control，低时延、无按 Token 计费、数据不出机房。**
+
+**限制：单演示者。** Agent Control 初始化与当前 Project/Log Stream 是进程级状态，App 只有 1 副本；同一时间只让一位演示者操作，否则 Control 与 Trace 可能串到对方会话。
+
+#### 准备（演示前 10 分钟）
+
+1. 运维节点：`bash deploy/k8s/scripts/40-verify.sh` → ALL PASS；`setup_demo_controls.py --bindings-only --enable sql`（标准状态）。
+2. Console → Project `splunk-ao-golden-demo` → Log Stream `healthcare`：确认已启用的 Luna 指标（Context Adherence (SLM)、Completeness (SLM)、Prompt Injection (SLM)、PII、Toxicity、Tone 等）。
+3. 可选：AO 管理员提供的 Grafana 中打开 Wizard（Luna 推理服务）仪表盘，观察 GPU 与请求时延。
+
+#### 故事线（约 10 分钟，可插在标准流程 Act 2 之后）
+
+| 步骤 | 操作 | 讲什么 / 看什么 |
+| --- | --- | --- |
+| L1 本地评估 | 问 Lisinopril 剂量问题 → 打开 Trace | LLM Span 上的 Context Adherence (SLM)、Completeness (SLM)，Trace 上的 Prompt Injection、PII、Tone 等都由本地 Luna 打分；数秒内出分，不调用外部 LLM。Trace 根上的 Context Adherence 是 roll-up |
+| L2 本地 Control：PII | `--enable sql,pii` → 查 P001 | Luna `pii` scorer 检出电话与地址 → POST Steer → 重试后输出不含电话与地址；Control Span 中可见检出的类别 |
+| L3 本地 Control：Prompt Injection | `--enable sql,injection` → 发注入文本；再问正常问题 | 注入请求 PRE Deny（分数约 0.9998），集群内整条 Trace 约 0.5 s 结束——模型根本没被调用；正常问题分数约 0.0001–0.06，放行 |
+| L4 规模化评估 | Experiments 页面或 Pod 内 `run_experiment.py` 跑 15 样本 | 每个样本的 Luna 指标与 Ground Truth Adherence（LLM 评判，本环境由集群内 Qwen 执行）对照；Luna 指标随写入很快完成，GT Adherence 需要 5–15 分钟 |
+| L5 全本地应用模型（可选） | provider 选 **vLLM (Qwen3-14B-FP8)** → 查 P001、问 Lisinopril、删除 P001 | 除 embedding 外，应用模型与评估都在机房内；LLM Span 显示结构化 `tool_calls`；SQL Control 照常 Deny。Qwen 时延明显高于 OpenAI（单次调用 2–20 s），只作为可选环节 |
+
+收尾：`setup_demo_controls.py --bindings-only --enable sql`；provider 切回 Hosted (OpenAI)。
+
+#### 话术要点与实测数据（2026-11-21，集群内）
+
+- **时延**：Wizard（vLLM 引擎，单块 NVIDIA L4）平均每次 Luna 请求约 0.40 s（排队约 0.03 s、prefill 约 0.31 s）；被 Luna Prompt Injection 拦截的完整请求在集群内约 0.5 s；同一请求从笔记本经公网为 1.0–2.4 s。
+- **成本**：Luna 指标与 Control 不按 Token 计费；本环境的 Ground Truth Adherence 评判也由集群内 Qwen 执行（导出 CSV 中 `judge_model=Qwen/Qwen3-14B-FP8`、评判费用 0）。外部费用只来自应用模型（OpenAI）与 embedding。
+- **数据边界**：Trace、评估、Control 决策都在机房内的 AO 中；应用在集群内经 AO 内部服务地址写入（不经公网）。
+- **质量**：Healthcare 15 样本 Experiment 的 Luna Context Adherence 均值 0.884、Completeness 0.933（45 个 LLM Span）。
+
 <a id="architecture"></a>
 
 ## 6. 架构与原理
@@ -1306,7 +1414,58 @@ python -m unittest discover -s tests -p 'test_runtime.py' -v
 python -m unittest tests.test_cisco_se_domain -v   # Cisco SE：Domain、Dataset、来源、模型参数、严格索引、导出器（mock 数据，不调用云端）
 # 需要本机 DB；使用隔离临时库，模型与 embedding 为 fixture，不产生云端费用：
 DEMO_TEST_POSTGRES=1 python -m unittest discover -s tests -p 'test_postgres_integration.py' -v
+python -m unittest tests.test_onprem_k8s -v       # profile、ingest 门、REST 地址、Hermes 解析、Control 输入、部署工具（不访问网络）
 ```
+
+<a id="onprem-architecture"></a>
+
+### 6.6 Backend profile、Kubernetes 部署与 On-prem 访问原理（2026-11-21 新增）
+
+#### Profile 机制
+
+`setup_env.py` 中的 `BACKEND_PROFILES` 用一张表描述每个后端的差异：Console 是否带租户路径、REST 与 Agent Control 走 Console 代理还是直连 API、允许的 Control 头名、Experiment 默认指标、是否优先 Luna 指标。`backend_profile` 选择其中一项；显式的 `galileo_api_url` / `galileo_ingest_url` / `agent_control_url` 覆盖推导值。新增后端只需在表中加一项，不需要分支代码。
+
+#### Kubernetes 部署边界
+
+```mermaid
+flowchart LR
+  b["浏览器"] -->|"golden.AO域名"| or["OpenResty（通配转发）"] --> ing["共享 ingress-nginx（AO 平台提供）"]
+  subgraph sg["命名空间 sao-golden（本应用所有）"]
+    i["Ingress + 自签 TLS"] -. "auth-url" .-> au["sao-golden-auth"]
+    i --> app["sao-golden-app"] --> pg[("PostgreSQL")]
+  end
+  ing --> i
+  subgraph ga["命名空间 galileo（AO，只读）"]
+    api["api"]; ins["ingest-service"]; ac["agent-control"]; wz["Wizard / Luna"]; ca["ConfigMap galileo-internal-ca-cert"]
+  end
+  app --> api & ins & ac
+  ac --> wz
+  ca -. "部署时只读复制公钥" .-> sg
+```
+
+本应用与 AO 的接触面只有三处：共用 ingress 控制器（只在本命名空间建 Ingress）、作为客户端调用 AO 的内部服务、部署时只读复制 AO 内部 CA 公钥。详见 [KUBERNETES.md 第 1 节](documentation/KUBERNETES.md#1-架构与原理)。
+
+#### 集群内访问 AO
+
+- **只用内部服务地址**：`api.galileo.svc.cluster.local:8088`（HTTPS）、`ingest-service…:8081`（HTTPS）、`agent-control…:8000`（HTTP）。不绕公网和 OpenResty，没有出口带宽与公网证书问题。
+- **信任 AO 内部 CA**：内部 HTTPS 由 AO 自己的根 CA 签发。initContainer 把 `ao-internal-ca` 与系统 CA 合并成一个 bundle，设置 `SSL_CERT_FILE` 与 `REQUESTS_CA_BUNDLE`；httpx、galileo-core、requests 都读取它，OpenAI 等公网证书照常受信。不关闭证书校验。
+- **Console 地址只用于浏览器**：`galileo_console_url` 只用来生成 “Open Console”、Trace / Experiment 深链，这些链接在演示者的浏览器中打开。
+
+#### Trace 写入：原生 JSON ingest 门（不改 OTLP）
+
+SDK 2.6.0 的 `GalileoLogger` 先探测 `<api>/ingest/healthz`，可用时把新 Trace 以 JSON 写到 `/ingest/traces/<project>`，否则退回 API 上的 Legacy 门。集群内的 `api` Service 不提供 `/ingest`，所以 `helpers/galileo_ingest.py` 在配置了 `galileo_ingest_url` 时让探测与写入改走 ingest-service；Trace/Span 更新、session 等调用仍走 API。这与 AO 官方 Observe 请求流一致，Trace 结构、Callback 插桩都不变，因此不需要改成 OTLP / OpenInference（列入 Roadmap）。注意：SDK 吞掉写入错误，需用 `check_demo.py --live` 与 ingest-service 日志确认真正写入。
+
+#### Control 输入只取最新用户消息
+
+`@control` 装饰的 LLM 步骤以函数的 `input` 参数作为 Control 输入。原实现把含系统提示词的完整消息列表作为输入，Luna Prompt Injection 会把系统提示词里的指令文字判为注入（On-prem 普通问题 0.85–0.93）。现在 `_invoke_llm(input, msgs)`：`input` 为最新用户消息（`latest_user_text`），完整消息列表 `msgs` 只交给模型。PII 等 POST Control 仍检查模型输出。
+
+#### vLLM / Qwen 工具调用（Hermes 适配器）
+
+集群内 vLLM 服务未开启服务端工具调用解析（`--enable-auto-tool-choice` / `--tool-call-parser hermes`）。请求中的工具定义仍会被 Qwen3 的 chat template 以 Hermes 格式渲染进提示词，但模型的调用以正文 `<tool_call>{…}</tool_call>` 返回，没有结构化 `tool_calls`。`helpers/hermes_chat.py` 的 `HermesToolCallChatOpenAI` 在 `_generate` / `_agenerate` 内（LangChain callback 之前）把这些块解析为标准 `tool_calls`，并关闭 Qwen3 的 thinking、去掉残留 `<think>` 文本；因此 LangGraph 的工具循环、Galileo LLM Span 的结构化工具调用、Agent Control 都不需要特殊处理。服务端开启解析后可移除该适配器（Roadmap）。
+
+#### Basic Auth 请求流
+
+AO 的 ingress-nginx 控制器以只读根文件系统运行，无法使用 `auth-type: basic`（需要在控制器内写 htpasswd 文件）。所以 Ingress 用 `auth-url`：控制器对每个请求先向 `sao-golden-auth`（nginx-unprivileged，读取 Secret `sao-golden-basic-auth`）发子请求，凭据正确返回 204 才转发到 App，否则把 401 与 `WWW-Authenticate: Basic` 返回给浏览器。认证服务的配置用 `try_files … =204`，**不能用 `return 204`**（`return` 在 rewrite 阶段执行，早于 `auth_basic`，会放行所有请求）。
 
 <a id="troubleshooting"></a>
 
@@ -1341,25 +1500,32 @@ DEMO_TEST_POSTGRES=1 python -m unittest discover -s tests -p 'test_postgres_inte
 | Cisco SE 报严格索引不匹配或缺失 | collection 的 provider / embedding 模型 / 维度与 YAML 不一致。执行 `python helpers/setup_vectordb.py cisco_se`，再跑 `check-demo --domain cisco_se` |
 | Context Adherence 在 Trace 根上为空 | 该 Scorer 作用于 LLM Span，根上只显示 roll-up。导出器取生成最终答案的那个 LLM Span 的分数，详见 [CSV 数据契约](documentation/CISCO_SE_MODEL_ECONOMICS_CSV.md) |
 | 界面显示 Agent Streams | 新产品名称与 Galileo SDK 的 Log Stream 概念对应；实际租户链接以 UI 为准 |
+| On-prem：普通问题被 Prompt Injection 拦截 | 确认运行的代码包含“LLM 步骤 Control 输入只取最新用户消息”（[6.6](#onprem-architecture)）；阈值 0.80；在 Control Span 中查看实际分数 |
+| On-prem：Trace 不出现，但 SDK 不报错 | SDK 会吞掉写入错误。`python scripts/check_demo.py --live`（集群内加 `--in-cluster`）查看 “SDK uses the native ingest door”；集群内必须配置 `galileo_ingest_url`。笔记本经慢速公网上传大批 Trace（如 15 样本 Experiment）可能超过 SDK 的 60 s 超时，改在集群内运行 |
+| On-prem：Agent Control 未连接 | Key 必须为组织级；头名 `Splunk-AO-API-Key`；`agent_control_url` 是否可达 |
+| On-prem：Luna 指标一直 computing / 为空 | 确认 Log Stream 上启用的是 SLM 版本；Trace 根上 Context Adherence / Completeness 是 roll-up，看 LLM Span；Wizard Pod 是否 Running（AO 管理员） |
+| 集群部署的部署、认证、证书、内部 CA、PVC 等问题 | 见 [KUBERNETES.md 第 10 节](documentation/KUBERNETES.md#10-排障) |
+| vLLM (Qwen) 很慢或不调用工具 | Qwen3-14B 单次调用 2–20 s，属预期；确认 `vllm_base_url` 以 `/v1` 结尾、模型名正确；工具调用由应用侧 Hermes 适配器解析（[6.6](#onprem-architecture)） |
 
 <a id="future"></a>
 
 ## 8. 后续扩展与补充资料
 
-Kubernetes 的安装位置已预留在 [2.2](#install-kubernetes)。以下功能同样只是计划，当前不作为启用步骤或现场能力。
+Kubernetes / On-prem 部署已于 2026-11-21 实现（[2.2](#install-kubernetes)）。以下功能只是计划，当前不作为启用步骤或现场能力。
 
 ### 8.1 vLLM / Qwen3-14B-FP8 Judge
 
-**Planned / Not implemented in the current macOS demo.** 未来预留 vLLM → Qwen3-14B-FP8 → Custom LLM-as-a-Judge。当前仍使用租户原生默认 Evaluator，不安装或配置本地 Judge。
+**Planned / Not implemented.** 未来预留 vLLM → Qwen3-14B-FP8 → Custom LLM-as-a-Judge。当前 `splunkse` 使用租户原生默认 Evaluator；`imlab-onprem` 使用 Luna（SLM）与平台 LLM 评判（该 On-prem 的平台评判模型已配置为集群内 Qwen3-14B-FP8，由 AO 管理员配置，不是本应用的功能）。注意：Qwen 目前已可作为**应用模型**（provider `vllm`，见 [3.1](#backend-profiles)），这与把它用作 Judge 是两件事。
 
 ### 8.2 其他后端 profile
 
 | Profile | Console | 状态 |
 |---|---|---|
-| `splunkse` | `https://console.multitenant.galileocloud.io/splunkse` | Current；唯一已实现配置路径 |
-| `cisco-demo` | `https://app.galileo.ai/cisco-demo` | Planned；没有一键切换或启用实现 |
+| `splunkse` | `https://console.multitenant.galileocloud.io/splunkse` | Current |
+| `imlab-onprem` | `https://console.<AO 域名>` | Current（2026-11-21）；笔记本与集群内两种用法 |
+| `cisco-demo` | `https://app.galileo.ai/cisco-demo` | Planned；没有实现 |
 
-未来 profile 放在独立配置层扩展；当前 `backend_profile` 只接受 `splunkse`。不将未来环境混入现阶段安装和故事线。
+新 profile 在 `setup_env.py` 的 `BACKEND_PROFILES` 中加一项即可（[6.6](#onprem-architecture)）。
 
 ### 8.3 Cisco SE 后续扩展（本次不做）
 
@@ -1372,8 +1538,26 @@ Kubernetes 的安装位置已预留在 [2.2](#install-kubernetes)。以下功能
 - Fixed-Context 模型对比：固定检索结果，只比较生成能力。
 - Splunk Enterprise Dashboard：在[另一仓库](https://github.com/highopes/splunk-galileo-dashboard)单独实施，消费 `data/cisco_se_model_economics.csv`；本仓库不做 Dashboard。
 
-### 8.4 补充资料
+<a id="roadmap"></a>
 
+### 8.4 Roadmap（Kubernetes / On-prem 之后）
+
+1. **bank-agent-java 部署到 K8s**：`bank.<AO 域名>`，按 [KUBERNETES.md 第 11 节](documentation/KUBERNETES.md#11-接入新的独立应用如-bank)的“独立应用”模式接入（自己的仓库、工作目录、命名空间、Ingress、证书与凭据；可在它自己的配置文件里沿用同一组 Basic Auth 账号）。
+2. **多演示者并发**：去除进程级全局状态（Agent Control 与当前 Project/Stream），或按演示者部署多个实例。
+3. **插桩演进**：OTLP / OpenInference；迁移到 `splunk_ao` SDK；Agent Control `otel` sink。
+4. **全本地**：服务端开启 Qwen 工具调用解析后移除应用侧 Hermes 适配器；集群内 embedding 服务。
+5. **自训练评估器**：AO 的 Luna Studio 微调可用后，演示自训练 adapter 作为评估器。
+6. **CI**：GitHub Actions 自动构建镜像、漏洞扫描、公开仓库卫生检查。
+7. **生产化**：PostgreSQL 备份、HA、NetworkPolicy、资源配额；内网浏览器访问（split DNS）。
+8. **认证升级**：需要登录页、登出、自助改密或 SSO 时，再评估 oauth2-proxy / Keycloak / 公司 SSO。
+9. **证书**：如果 OpenResty 开启后端证书校验，本应用改用受信证书（由本应用自己管理）。
+
+AO 平台自身的事项（如运维主机名的来源限制）不属于本仓库，由 AO 平台文档登记。
+
+### 8.5 补充资料
+
+- [KUBERNETES.md](documentation/KUBERNETES.md)：Kubernetes / On-prem 部署与运维手册（含部署前人工准备）。
+- [records/k8s-onprem-record-20261121.md](documentation/records/k8s-onprem-record-20261121.md)：本次升级的逐条工程记录（脱敏）。
 - [VALIDATION.md](documentation/VALIDATION.md)：真实验收环境、Trace 与 Experiment 证据、限制和已知问题。
 - [CISCO_SE_MODEL_ECONOMICS_CSV.md](documentation/CISCO_SE_MODEL_ECONOMICS_CSV.md)：Cisco SE Model Economics CSV 的字段、判定规则与下游接口。
 - [CHAOS_ENGINEERING.md](documentation/CHAOS_ENGINEERING.md)：五种故障注入的实现边界。

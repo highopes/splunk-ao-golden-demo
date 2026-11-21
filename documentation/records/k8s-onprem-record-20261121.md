@@ -20,11 +20,12 @@
 
 | 项 | 状态 |
 | --- | --- |
-| 阶段 | 0–3、5 完成；6 进行中 |
-| 本仓库 HEAD（GitHub / Mac / `<OPS_NODE>` / `<BUILD_HOST>`） | `03a0a1f`（四处一致） |
+| 阶段 | 0–3、5、6 完成；8 进行中 |
+| 本仓库 HEAD（GitHub / Mac / `<OPS_NODE>` / `<BUILD_HOST>`） | `7ffa516`（四处一致；第 8 阶段文档提交后更新） |
 | 镜像 | 运行中 `highope/sao-golden:1.0.0-e93c4d6`（`sha256:4a7076fc…12b2`）；此前 `1.0.0-03a0a1f`（`sha256:3536d717…e19f`）。均为 Public |
 | 命名空间 `sao-golden` | Helm release `sao-golden` rev4；app / auth / postgres 均就绪；`40-verify.sh` ALL PASS；外网经 Basic Auth 可用 |
-| 未决事项 | Healthcare 15 样本 Experiment 在阶段 6 集群内验收（Mac 公网上行过慢） |
+| Demo Control | SQL 启用；PII、Prompt Injection 停用（标准状态） |
+| 未决事项 | 无（阶段 6 的 15 样本 Experiment 已在集群内完成） |
 
 ## 执行记录
 
@@ -187,3 +188,39 @@ bash deploy/k8s/build/build-image.sh push highope/sao-golden
 - 原因：C1b 在 `main()` 中加了局部 `import importlib`，使整个函数里的 `importlib` 变成局部变量。处理：删除局部导入，新增回归测试（模拟缺少 `secrets.toml` 时 `main()` 返回 1、不抛异常），重建镜像 `1.0.0-e93c4d6`（`sha256:4a7076fc8b12a513bf2ed89338ee0a5f9bec231d9b9674e458183061494f12b2`，冒烟 38 个测试 OK、卫生 PASS）。
 
 **当前对象**（命名空间 `sao-golden`）：Deployment `sao-golden-app`（1/1）、`sao-golden-auth`（1/1）；StatefulSet `sao-golden-postgres`（1/1，PVC 5Gi @ `<PG_NODE>`）；Service ×3；Ingress `sao-golden`（`nginx`，TLS，auth-url）；ConfigMap `ao-internal-ca`、`sao-golden-auth`；Secret ×4；Helm release `sao-golden` rev4。
+
+### 2026-11-21 阶段 6：演示验收（执行者：Mac 上的 GitHub Copilot；浏览器在已认证的 `<APP_HOST>` 标签页中操作，命令经 JumpServer 在 `<OPS_NODE>` 执行；23:25 开始，23:55 完成）
+
+汇总结果见 [VALIDATION.md](../VALIDATION.md#onprem-k8s)。这里记录做法与原始数据位置（`<OPS_NODE>:/root/<WORKDIR>/.work/logs/`）。
+
+**浏览器流程**（Playwright 在已登录的标签页中操作；侧栏 `Backend: imlab-onprem`）：
+
+| 场景 | Control 绑定 | 结果 |
+|---|---|---|
+| Act 3 Hallucination fixture | sql | “100mg daily” 写入 Trace |
+| Act 4 删除 P001 | sql | `block-harmful-sql` → deny；之后 `healthcare_patient` 30 行、P001 存在（PG 只读查询） |
+| Chaos：Tool Instability / Rate Limits / RAG Disconnect / Sloppiness / Data Corruption | sql | 503；429；检索断开；数字被改（P16）；`gpt-4o` 下 10mg → 99mg。Reset 会清除 Chaos 开关，但模型选择可能保留 |
+| PII（Luna `pii`） | sql,pii | 首次输出检出 `address`/`name`/`phone_number` → Steer → 修正后输出不含电话与地址 |
+| Prompt Injection（Luna `prompt_injection`） | sql,injection | 攻击 0.9998 → deny（Trace 0.5 s）；Lisinopril 0.00015 放行 |
+| 恢复 | sql | `setup_demo_controls.py --bindings-only --enable sql`：SQL enabled、PII disabled、Injection disabled |
+
+**Pod 内运行**（`kubectl -n sao-golden exec deploy/sao-golden-app -c app -- …`，长任务放 tmux）：
+
+| 时间 | 内容 | 日志 / 产物 | 结果 |
+|---|---|---|---|
+| 23:35 | `experiments/run_experiment.py healthcare --provider hosted --experiment-name healthcare-k8s-luna-<ts>` | `experiment-healthcare-k8s-<ts>.log`、`experiment-summary-*.log`、`experiment-spans-*.log` | 退出码 0；15 条 Trace 全部写入（阶段 2 在笔记本上因上行带宽失败的部分已完成）；LLM Span 上 `context_adherence_luna` 均值 0.884、`completeness_luna` 0.933（各 45 个）；Trace 上 `prompt_injection` 均值 0.001；GT Adherence 约 15 分钟内 15/15 `success` |
+| 23:37 | Qwen：探针 `agent_run.py healthcare vllm` 三题 | `qwen-probe-*.log`、`qwen-evidence-*.log` | 18 / 38 / 56 s；LLM Span `model=Qwen/Qwen3-14B-FP8`，`tool_calls`：`get_patient_info`、`search_medicine_qa`、`delete_patient_record`；SQL Control deny；Trace 上 Luna 指标齐全（P001 回答检出 `pii`） |
+| 23:41 | `scripts/run_cisco_se_ab.py` → `scripts/export_cisco_se_economics.py` | `cisco-se-ab-*.log`、`cisco-se-export-*.log`；`/data/cisco_se_ab_runs/20261121T154130Z.json`；CSV `kubectl cp` 到 `.work/cisco_se_model_economics-k8s-20261121.csv` | 预检全部 PASS（两个模型真实工具调用、Scorer、Dataset、Group、reliable ingest）；每个模型约 100 s；回读 GT 10/10；导出 20 行、`comparison_ready` 20/20；数值见 VALIDATION |
+| 23:42 | Bank / Insurance / Restaurant 冒烟（`agent_run.py <domain> hosted`） | `smoke-domains-*.log` | 6 题全部正确作答，5–12 s |
+| 23:45 | 证据回读：探针 `pod_evidence.py splunk-ao-golden-demo healthcare 25` | `control-evidence-*.log` | 各 Control 决策与分数（见上表） |
+| 23:46 | Wizard `/metrics`（ClusterIP，只读 GET） | 临时文件已删除 | 726 次请求；e2e 合计 289.9 s（均值 0.40 s）、排队 24.3 s、prefill 222.2 s；`finished_reason=error` 0；节点 GPU 为 NVIDIA L4 |
+
+探针脚本 `agent_run.py`、`pod_evidence.py`、`exp_summary.py`、`exp_spans.py`、`smoke-domains.sh` 在 `.work/probes/`（不进 Git），通过 `kubectl exec -i … python - <args> < 脚本` 在 Pod 内执行，不修改镜像。
+
+**发现**：
+
+1. On-prem 的 Ground Truth Adherence 评判模型是集群内 `Qwen/Qwen3-14B-FP8`（CSV `judge_model`），评判费用 0，但比 SaaS 慢（15 样本约 15 分钟、A/B 每个模型约 5 分钟）。已写入 README 与 CSV 契约。
+2. Control Span 时长记为 0（SDK 的决策标记），Luna Control 时延改用整条 Trace 时长与 Wizard 指标说明。
+3. Trace 根上的 `context_adherence_luna`、`completeness_luna` 为 `roll_up`，分数在 LLM Span 上（与 SaaS 的 Context Adherence 相同）。
+4. 第一次把两个文件并行上传到 `<OPS_NODE>` 的 Web 终端导致该终端会话断开；改为串行上传后正常（只影响操作方式）。
+5. Grafana 仪表盘未截图（含账号信息，不入库）；时延数据取自 Wizard `/metrics`。

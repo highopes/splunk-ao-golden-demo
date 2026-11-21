@@ -21,5 +21,11 @@
 | Hallucination | 明确 synthetic fixture / no model invocation；移除假 token、latency、cost；真实平台评分 |
 | Experiment | 校验 CSV；仅在确切冲突复用 Dataset；SDK 管理 sample Trace，Agent 不提前关闭；使用当前租户可用的原生 GalileoMetrics 标签；结果链接采用服务返回的 group/run ID |
 | 文档 / 测试 | README 单一事实来源；区分真实云端、数据库/框架与模型夹具；未来能力只列 Planned |
+| Backend profile（2026-11-21） | `setup_env.py` 的 `BACKEND_PROFILES` 表：`splunkse` 与 `imlab-onprem`（Splunk AO On-prem：无租户路径、REST 与 Agent Control 直连 API、头名 `Splunk-AO-API-Key`、Luna 指标优先）；显式 `galileo_api_url` / `galileo_ingest_url` / `agent_control_url` 覆盖；`check_demo.py --in-cluster` 预检 |
+| Trace 写入（2026-11-21） | `helpers/galileo_ingest.py`：配置 `galileo_ingest_url` 时，SDK 的原生 JSON ingest 门（探测与 `/ingest/*` 写入）改走 ingest-service，其他调用仍走 API。**依赖 SDK 2.6.0 内部实现**，升级 SDK 时由 `tests/test_onprem_k8s.py` 复核 |
+| Control 输入（2026-11-21） | LLM 步骤的 `@control` 输入改为最新一条用户消息（`latest_user_text`），完整消息列表另传给模型；避免系统提示词被 Prompt Injection scorer 误判 |
+| vLLM provider（2026-11-21） | 新增 provider `vllm`（OpenAI 兼容）与 `helpers/hermes_chat.py`（把正文中的 Hermes `<tool_call>` 解析为结构化 `tool_calls`）；embedding 仍用 OpenAI |
+| 评估指标（2026-11-21） | Experiment 默认指标按 profile 选择；Domain YAML 的 `experiments.metrics` 可按 profile 覆盖；导出器按 profile 优先 Luna 指标 |
+| 容器 / K8s（2026-11-21） | `Dockerfile`、`.dockerignore`、Helm chart `deploy/helm/splunk-ao-golden-demo`（含 auth-url 认证服务）、`deploy/k8s/{build,scripts}`；`DEMO_DATA_DIR` 让可写输出（CSV、A/B 清单）落到容器卷；`scripts/setup_demo_controls.py` 用代码建立三条 Demo Control；`scripts/check-public-hygiene.sh` 公开仓库卫生检查 |
 
 未来升级先比较基线与新 upstream/main，再逐项应用本地修改。不要覆盖用户 secrets、本地数据库、.runtime 或 .agent-context。

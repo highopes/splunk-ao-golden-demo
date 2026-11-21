@@ -2,7 +2,7 @@
 
 2026-10-06。操作以根 [README](../README.md) 为准。**macOS / Healthcare / OpenAI / splunkse 标准路径已完成应用 UI、云端 API、Console GUI、连续排练与 Reset 重复验收，可标为 Demo-ready。** Bank 切换的 RAG / Tool / Trace / 9 样本 UI Experiment 也通过。结论限于下述实际环境；所有患者、客户、知识与攻击用例均为上游 synthetic Demo 数据。
 
-2026-10-21 新增的 Cisco SE Domain、双模型 Experiment 与 CSV 导出单独记录在 [Cisco SE Domain / Model A-B / CSV Export](#cisco-se)，逐项标注验收状态，**不沿用 Healthcare 的 Demo-ready 结论**。2026-10-22 的侧边栏导航与标题修复记录在 [侧边栏导航修复](#sidebar-nav)。2026-10-27 的数据库未启动排障与 `start-demo.sh` 自动检查记录在 [数据库启动检查](#db-autostart)。
+2026-10-21 新增的 Cisco SE Domain、双模型 Experiment 与 CSV 导出单独记录在 [Cisco SE Domain / Model A-B / CSV Export](#cisco-se)，逐项标注验收状态，**不沿用 Healthcare 的 Demo-ready 结论**。2026-10-22 的侧边栏导航与标题修复记录在 [侧边栏导航修复](#sidebar-nav)。2026-10-27 的数据库未启动排障与 `start-demo.sh` 自动检查记录在 [数据库启动检查](#db-autostart)。2026-11-21 新增的 Kubernetes / Splunk AO On-prem（`imlab-onprem`，Luna 为主）路径单独记录在 [Kubernetes / On-prem 验收](#onprem-k8s)。
 
 ## 环境与配置
 
@@ -347,3 +347,82 @@ v1 对照（run_id `20261021T071023Z`，Dataset v1，已作废）：nano `1c14e8
 | Cisco SE | N9332D-H2R 的 400G 端口与高度 | 32×400G QSFP-DD、1RU，带来源，约 19 秒 |
 
 - 上述冒烟与一条计时诊断（session `Healthcare timing diag`）向各行业 stream 写入了真实 Trace。Insurance / Restaurant 只做了单问冒烟，评分、Control 与 Experiment **仍未验收**，不能标为 Demo-ready。
+
+<a id="onprem-k8s"></a>
+
+## Kubernetes / Splunk AO On-prem（`imlab-onprem`）验收（2026-11-21）
+
+**结论：机房 Kubernetes 部署 + Splunk AO On-prem 路径完成端到端验收，评估与 Control 以 Luna（SLM）为主。** 范围：Healthcare 标准与深入流程、15 样本 Experiment、Cisco SE 双模型 A/B 与 CSV、Qwen provider、Bank / Insurance / Restaurant 冒烟。逐条执行记录见 [records/k8s-onprem-record-20261121.md](records/k8s-onprem-record-20261121.md)；安装运维见 [KUBERNETES.md](KUBERNETES.md)。环境相关值已脱敏（`<AO_DOMAIN>`、`<APP_HOST>` 等，含义见记录文档）。
+
+### 环境
+
+| 项 | 值 |
+|---|---|
+| 集群 | Kubernetes v1.32.13，4 节点；共享 ingress-nginx v1.14.1（AO 平台提供，只读根文件系统） |
+| Splunk AO On-prem | api v1.1274.0、ingest-service v0.109.1、agent-control v0.5.30；Wizard（Luna，vLLM 引擎）在 1 块 NVIDIA L4 上；平台 LLM 评判模型为集群内 `Qwen/Qwen3-14B-FP8` |
+| 应用 | 镜像 `highope/sao-golden:1.0.0-e93c4d6`（`sha256:4a7076fc8b12a513bf2ed89338ee0a5f9bec231d9b9674e458183061494f12b2`，amd64，Public）；Helm release `sao-golden` rev4；Python 3.12.16；galileo 2.6.0、agent-control-sdk 8.11.0（未升级） |
+| 数据库 | `pgvector/pgvector:pg17` StatefulSet，PVC 5Gi；5 个 Domain 由初始化 Job 导入（2 min 35 s） |
+| 应用模型 | OpenAI（Healthcare 默认 `gpt-5.4-nano`；Data Corruption 用 `gpt-4o`；Cisco SE A/B 为 `gpt-5-nano` / `gpt-6.1-sol`）；可选集群内 vLLM `Qwen/Qwen3-14B-FP8` |
+| 访问 | 外网 `https://<APP_HOST>` 经 OpenResty 通配转发 → 共享 ingress → Basic Auth（`auth-url` 认证服务）；集群内经 AO 内部服务地址 + AO 内部 CA |
+
+### 工程检查
+
+| 检查 | 结果 |
+|---|---|
+| 单元测试（Mac） | 72 OK（10 个需本机 PG 的测试默认跳过；`DEMO_TEST_POSTGRES=1` 时全部通过）；新增 `tests/test_onprem_k8s.py` 23 个 |
+| `splunkse` 回归（Mac） | `check-demo --live` PASS；UI 两类问题正常，Trace 写入 splunkse（代码改动未影响 SaaS 路径） |
+| 镜像 | `build-image.sh all`：`uv pip check`、只读根文件系统冒烟（`/_stcore/health`、首页、容器内 38 个单元测试、PG 连接）、镜像内无 `.git` / secrets / 数据、`docker history` 无凭据、导出 `/app` 的公开仓库卫生检查 PASS |
+| 部署 | `helm lint`、`kubectl apply --dry-run=client` 通过；`40-verify.sh` **ALL PASS**（Pod 内 `check_demo.py --in-cluster --live` 全部 PASS；无凭据 401、Basic Auth 200） |
+| 外网 | 无凭据 401（`WWW-Authenticate: Basic`）；浏览器登录后 WebSocket 正常；Console 与深链指向公网 Console |
+| 集群内路径 | ingest-service 日志中 Trace 来自 App Pod IP；ingress 上 `/ingest` 请求为 0 |
+| AO 隔离 | `galileo-stack` rev5、`pulse` rev1 不变；AO `70-verify.sh` 通过；`galileo` 命名空间只读（复制 CA 公钥、读 Service） |
+
+### On-prem 兼容性（阶段 2）
+
+- **Trace 写入**：SDK 2.6.0 使用原生 JSON ingest 门；集群内需 `galileo_ingest_url` 指向 ingest-service（`api` Service 不提供 `/ingest`）。不改为 OTLP。
+- **Agent Control**：SDK 8.11.0 与服务端 v0.5.30 兼容，`Splunk-AO-API-Key` 与 `Galileo-API-Key` 两种头名均可；需组织级 Key。
+- **Luna**：17 个文本 SLM scorer（13 族）出分。
+- **Prompt Injection 误判与修复**：Control 输入原为含系统提示词的完整消息列表，普通问题得分 0.85–0.93（误拦）。改为只取最新用户消息后：普通问题 0.0001–0.06，攻击 0.9998。
+- **成本**：On-prem 价格表包含 `gpt-5.4-nano`、`gpt-5-nano`、`gpt-6.1-sol`。
+
+### 演示验收（阶段 6，均为集群内真实运行）
+
+| 场景 | 证据 | 结果 |
+|---|---|---|
+| Act 1 / 2：知识问答与患者查询 | 浏览器两题；Trace 含 LLM / Tool / Retriever Span | ✅ |
+| Act 3：来源与答案矛盾 | Hallucination fixture（“100mg daily”）写入 Trace（synthetic，不调用模型） | ✅ |
+| Act 4：SQL PRE Deny | Control Span `block-harmful-sql` → `deny`；`healthcare_patient` 仍为 30 行、P001 存在 | ✅ |
+| Chaos | Tool Instability 503、Rate Limits 429、RAG Disconnect、Sloppiness（数字被改，如 P16）、Data Corruption（`gpt-4o`：10mg → 99mg） | ✅ |
+| PII POST Steer（Luna `pii`） | 首次输出检出 `address` / `name` / `phone_number` → Steer → 重试输出不含电话与地址 | ✅ |
+| Prompt Injection PRE Deny（Luna） | 攻击 0.9998 → `deny`，集群内整条 Trace 0.5 s（模型未被调用）；正常问题 0.0001–0.06 放行 | ✅ |
+| Healthcare 15 样本 Experiment（`hosted`） | 15/15 Trace 写入；Luna Context Adherence 均值 0.884、Completeness 0.933（45 个 LLM Span）；Prompt Injection 均值 0.001；GT Adherence 15/15 评分完成 | ✅ |
+| Cisco SE A/B（Pod 内） | 预检全部 PASS；每个模型 10 条根 Trace、GT 10/10 完成、9 个标签、在 Group 中；CSV 20 行已 `kubectl cp` 到运维节点 `.work/` | ✅ 见下表 |
+| Qwen provider | P001 查询（`get_patient_info`）、Lisinopril（`search_medicine_qa` → RAG）、删除 P001（`delete_patient_record` → SQL Control `deny`）；LLM Span 含结构化 `tool_calls` | ✅（慢，见限制） |
+| 其他行业冒烟（`hosted`） | Bank：改名政策（RAG）+ C001 账户（工具）；Insurance：理赔对保费影响（RAG）+ C001（工具）；Restaurant：厨房关店清单（RAG）+ 周四早班（工具） | ✅ 各 5–12 s |
+
+Cisco SE A/B（run `20261121T154130Z`，Dataset v2，10 题）：
+
+| 模型 | GT 通过 | Luna Context Adherence 均值 | 应用成本 USD | 每个通过答案成本 USD | Token | 平均 / P95 时延 s | `comparison_ready` |
+|---|---|---|---|---|---|---|---|
+| `gpt-5-nano` | 6/10 | 0.904 | 0.004144 | 0.000691 | 38,746 | 9.22 / 12.93 | 10/10 |
+| `gpt-6.1-sol` | 10/10 | 0.936 | 0.077440 | 0.007744 | 29,088 | 9.41 / 10.77 | 10/10 |
+
+评判模型 `Qwen/Qwen3-14B-FP8`，评判费用 0；Luna Context Adherence 不计费（`n/a`）。
+
+### Luna 时延与本地化素材
+
+| 指标 | 值 | 来源 |
+|---|---|---|
+| Wizard 每次请求平均端到端 | 约 0.40 s（排队约 0.03 s、prefill 约 0.31 s；726 次请求，无错误） | Wizard `/metrics`（`vllm:e2e_request_latency_seconds` 等，只读） |
+| Luna Prompt Injection 拦截的整条请求 | 集群内 0.5 s；笔记本经公网 1.0–2.4 s | Trace 时长 |
+| Luna 指标出分 | Trace 写入后数秒内（Experiment 结束即可读到 Luna 分数）；GT Adherence（Qwen 评判）需数分钟 | Experiment 回读 |
+
+Agent Control 的 Control Span 时长记为 0（SDK 把它作为决策标记），因此 Control 评估时延用整条 Trace 时长与 Wizard 指标说明。Grafana 截图未存入仓库（含账号信息）。
+
+### 限制与已知问题
+
+- **单演示者**：进程级 Agent Control 与 Project/Stream 状态；App 1 副本。
+- **Qwen 慢**：单次 LLM 调用 2–20 s（与 Experiment 并发时），三题 18 / 38 / 56 s；只作为可选环节。
+- **GT Adherence 慢**：On-prem 评判由集群内 Qwen 执行：Healthcare 15 样本约 15 分钟内全部完成；Cisco SE 每个模型（10 题）约 5 分钟。
+- **笔记本经公网上传**：上行带宽低时，15 样本 Experiment 的批量写入会超过 SDK 60 s 超时，且 SDK 吞掉错误；改在集群内运行（本次即如此）。
+- **安全事件（已处理）**：认证服务第一版配置使用 `return 204`，约 70 秒内无凭据可访问；访问日志显示期间无外部访问。已改为 `try_files`，并在 KUBERNETES.md 写入“先验证认证、再放出后端”。详见工程记录阶段 5。
