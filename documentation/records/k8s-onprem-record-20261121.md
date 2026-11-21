@@ -20,8 +20,8 @@
 
 | 项 | 状态 |
 | --- | --- |
-| 阶段 | 0–3、5、6 完成；8 进行中 |
-| 本仓库 HEAD（GitHub / Mac / `<OPS_NODE>` / `<BUILD_HOST>`） | `7ffa516`（四处一致；第 8 阶段文档提交后更新） |
+| 阶段 | 0–3、5、6、8、9 全部完成（第 4、7 阶段按决策取消） |
+| 本仓库 HEAD（GitHub / Mac / `<OPS_NODE>` / `<BUILD_HOST>`） | 见本节之后的最后一次提交（四处一致） |
 | 镜像 | 运行中 `highope/sao-golden:1.0.0-e93c4d6`（`sha256:4a7076fc…12b2`）；此前 `1.0.0-03a0a1f`（`sha256:3536d717…e19f`）。均为 Public |
 | 命名空间 `sao-golden` | Helm release `sao-golden` rev4；app / auth / postgres 均就绪；`40-verify.sh` ALL PASS；外网经 Basic Auth 可用 |
 | Demo Control | SQL 启用；PII、Prompt Injection 停用（标准状态） |
@@ -224,3 +224,16 @@ bash deploy/k8s/build/build-image.sh push highope/sao-golden
 3. Trace 根上的 `context_adherence_luna`、`completeness_luna` 为 `roll_up`，分数在 LLM Span 上（与 SaaS 的 Context Adherence 相同）。
 4. 第一次把两个文件并行上传到 `<OPS_NODE>` 的 Web 终端导致该终端会话断开；改为串行上传后正常（只影响操作方式）。
 5. Grafana 仪表盘未截图（含账号信息，不入库）；时延数据取自 Wizard `/metrics`。
+
+### 2026-11-21 阶段 8：文档完善与同步（执行者：Mac 上的 GitHub Copilot；23:30 开始，00:10 完成）
+
+- 本仓库（`0972419`）：新增 [KUBERNETES.md](../KUBERNETES.md)（含“部署前人工准备”）；README 增加 K8s / On-prem 入口、1.2 两套环境对照、2.2 Kubernetes、3.1 多后端 `secrets.toml.<后端>` 与 profile、3.5 On-prem 差异、4.6 K8s 维护、5.9 本地化 Luna 演示、6.6 架构原理、第 7 章排障、8.4 Roadmap；[VALIDATION.md](../VALIDATION.md#onprem-k8s) 新章节；UPSTREAM 修改清单；CSV 契约第 8 节。卫生检查 PASS（127 个文件），相对链接与锚点检查 0 错误。
+- AO 平台仓库（只改文档，私有）：README 3.17.2（通配转发）、4.2（集群内访问 AO）、新 4.12（独立应用共用入口的约定与已接入应用清单）、5.1 K20（K10 并入）、6.3 排障；OpenResty 配置文件注释；平台事实登记记录。
+- 同步：两个仓库在 GitHub、Mac、`<OPS_NODE>`（本应用与 AO 两个工作目录）、`<BUILD_HOST>` 均快进到最新提交，工作区干净。
+
+### 2026-11-22 阶段 9：收尾（00:10–00:20）
+
+- `<BUILD_HOST>`：删除本任务的旧本地镜像标签 `1.0.0-8b72a33`、`1.0.0-7af15f9`（构建失败，未推送）与 `1.0.0-03a0a1f`（已被取代，Docker Hub 上仍保留）；保留运行中的 `1.0.0-e93c4d6`。无 `sao-golden-*` 冒烟容器、网络、卷；未执行任何 `prune`。
+- `<OPS_NODE>`：本任务的 tmux 会话已结束；`/tmp` 无本任务文件；`.work/probes/` 与 `.work/logs/` 保留（Git 忽略）。
+- Mac：`secrets.toml` 为 `splunkse`；本地 App 已停；删除 `/tmp` 中的 helm 渲染临时文件；停止防休眠。
+- 最终核对（23:59）：`40-verify.sh` **ALL PASS**；外网无凭据 401；AO `galileo-stack` rev5、`pulse` rev1，AO `70-verify.sh` 验证通过，AO 工作目录干净、`.secret/` 无新文件、`galileo` 命名空间无本任务创建的对象；Demo Control 为 SQL 启用、PII / Injection 停用。
