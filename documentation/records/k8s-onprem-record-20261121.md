@@ -20,10 +20,10 @@
 
 | 项 | 状态 |
 | --- | --- |
-| 阶段 | 0–3 完成；5 进行中 |
+| 阶段 | 0–3、5 完成；6 进行中 |
 | 本仓库 HEAD（GitHub / Mac / `<OPS_NODE>` / `<BUILD_HOST>`） | `03a0a1f`（四处一致） |
-| 镜像 | `highope/sao-golden:1.0.0-03a0a1f`（`sha256:3536d717…e19f`，Public） |
-| 命名空间 `sao-golden` | 未创建 |
+| 镜像 | 运行中 `highope/sao-golden:1.0.0-e93c4d6`（`sha256:4a7076fc…12b2`）；此前 `1.0.0-03a0a1f`（`sha256:3536d717…e19f`）。均为 Public |
+| 命名空间 `sao-golden` | Helm release `sao-golden` rev4；app / auth / postgres 均就绪；`40-verify.sh` ALL PASS；外网经 Basic Auth 可用 |
 | 未决事项 | Healthcare 15 样本 Experiment 在阶段 6 集群内验收（Mac 公网上行过慢） |
 
 ## 执行记录
@@ -148,3 +148,42 @@ bash deploy/k8s/build/build-image.sh push highope/sao-golden
 2. 构建后以非 root 运行 `uv pip check` 报 `Failed to initialize cache at /home/app/.cache/uv`：构建时 root 在 `HOME` 下创建了 uv 缓存。处理：`UV_CACHE_DIR=/tmp/.uv-cache`，安装后删除缓存（提交 `7af15f9`）。
 3. 冒烟中容器内 3 个测试报错：部署工具测试需要 `deploy/`，而镜像按设计不含。处理：缺少该工具时跳过（提交 `03a0a1f`）。
 4. 失败的中间标签 `1.0.0-8b72a33`、`1.0.0-7af15f9` 只在构建机本地，未推送；第 9 阶段清理。
+
+### 2026-11-21 阶段 5：部署到 Kubernetes（执行者：Mac 上的 GitHub Copilot，经 JumpServer 在 `<OPS_NODE>` 操作；22:55 开始，23:25 完成）
+
+**预检**：工作副本快进；`secrets_tool.py check` 键齐全；`helm lint` 通过；`helm template … | kubectl apply --dry-run=client` 通过；只读取得 `galileo/galileo-internal-ca-cert`（Galileo Internal Root CA，到期 2031-11-19）；用该 CA 经 ClusterIP + SNI 校验 `api.galileo.svc.cluster.local`、`ingest-service.galileo.svc.cluster.local` 证书主机名均 `Verify return code: 0 (ok)`（节点自身不解析 `*.svc.cluster.local`）。AO 基线：`galileo-stack` rev5、`pulse` rev1。
+
+| 时间 | 命令（在 `/root/<WORKDIR>`） | 结果 |
+| --- | --- | --- |
+| 22:55 | `bash deploy/k8s/scripts/10-prepare-namespace.sh` | 命名空间 `sao-golden`（标签 `app.kubernetes.io/part-of`）；ConfigMap `ao-internal-ca`；自签 TLS `sao-golden-tls`（`<APP_HOST>`，到期 2029-11-20）；Secret `sao-golden-postgres`、`sao-golden-app`（21 个键、无 `[k8s]`）、`sao-golden-basic-auth`（1 行 apr1）。约 3 s |
+| 22:56 | `bash deploy/k8s/scripts/20-deploy.sh 1.0.0-03a0a1f`（tmux） | rev1；PG 调度到 `<PG_NODE>`，PVC 5Gi（openebs-hostpath）；App Running。约 3 min（含首次拉取镜像） |
+| 23:03 | 同上（chart 改为 auth-url，见下） | rev2 |
+| 23:07 | 同上（认证服务修复） | rev3 |
+| 23:07 | `bash deploy/k8s/scripts/30-init-data.sh`（tmux） | Job `sao-golden-init-…` Complete，2 min 35 s：healthcare 15 篇/30 行、bank 9/30、insurance 9/30、restaurant 19/40、cisco_se 34 篇（`text-embedding-3-large`） |
+| 23:16 | `bash deploy/k8s/scripts/20-deploy.sh 1.0.0-e93c4d6` | rev4（修复 `check_demo.py` 后的新镜像） |
+| 23:17 | `bash deploy/k8s/scripts/40-verify.sh` | **ALL PASS**（见下） |
+
+**`40-verify.sh`（rev4）**：Pod 就绪；Pod 内 `check_demo.py --in-cluster --live`：profile/地址、REST 不经 Console、Pod `/_stcore/health` 200、CA bundle 149 张证书、`SSL_CERT_FILE`=`REQUESTS_CA_BUNDLE`、AO API `/healthcheck`、ingest-service `/ingest/healthz`、Agent Control `/health`、SDK 选择原生 ingest 门、Project/Log Stream、Agent Control 注册回读、5 个 hosted 模型、pgvector 0.8.7、`healthcare_patient` 30 行、`healthcare_hosted_index` 15 篇 → 全部 PASS；经共享 ingress NodePort：无凭据 401、Basic Auth 200、`/_stcore/health` 200。
+
+**外网（闸门 G5 ✅）**：Mac 访问 `https://<APP_HOST>/` 与 `/_stcore/health` 无凭据均 401（`WWW-Authenticate: Basic realm="Splunk AO Golden Demo"`，`server: openresty`，Let's Encrypt 通配证书）——OpenResty 通配转发已确认，无需 OpenResty 改动。用户在 Chrome 中以 `<BASIC_AUTH_USER>` 登录后：页面正常、WebSocket 正常，Healthcare 两例题 31.8 s / 10.6 s 正确作答，侧栏 “Agent Control connected”、`Backend: imlab-onprem`；“Open Splunk AO Console” 与 “View traces” 链接均指向公网 `console.<AO_DOMAIN>`。
+
+**集群内走内部地址**：ingest-service 日志中有来自 App Pod IP 的 `POST /ingest/traces/<pid>`，同期 ingress 上 `/ingest` 请求为 0——Trace 经 ingest-service 内部地址写入。
+
+**AO 未受影响**：`galileo-stack` rev5、`pulse` rev1 不变；AO 的 `deploy/scripts/70-verify.sh`（只运行）“验证通过”；`/root/ns_galileo` 工作区无变更。
+
+**问题 1：共享 ingress-nginx 无法使用 `auth-type: basic`（设计变更，用户决策）**
+- 现象：事件 `AnnotationParsingFailed: unexpected error creating password file: open /etc/ingress-controller/auth/…passwd: read-only file system`；该位置被拒绝，返回 503。
+- 原因：AO 的 ingress-nginx 控制器 `readOnlyRootFilesystem: true`，且没有可写的 `/etc/ingress-controller/auth` 挂载；`auth-type: basic` 需要在控制器内写 htpasswd 文件。任务书 4.6 “无需改动 AO 控制器”的前提不成立。
+- 决策（用户选择方案 A）：本应用在自己的命名空间部署认证服务 `sao-golden-auth`（`nginxinc/nginx-unprivileged:1.30.6-alpine`，固定 digest，非 root，只读根文件系统），读取同一个 Secret `sao-golden-basic-auth`；Ingress 改用 `nginx.ingress.kubernetes.io/auth-url`（外部认证）。浏览器仍弹 Basic Auth 框，AO 零改动。放弃的方案：Pod 内 nginx sidecar（可行，但改动应用 Pod 结构）；修改 AO 控制器（违反 D15）。
+
+**问题 2：安全事件——约 70 秒的无认证暴露（已处理）**
+- 经过：auth-url 版本（rev2，23:03:03）部署后，23:04:19 内网检查发现无凭据也返回 200。23:04:33 执行 `kubectl -n sao-golden scale deploy sao-golden-app --replicas=0` 止损（之后返回 503）。暴露窗口约 23:03:20–23:04:30。
+- 影响核查：ingress 访问日志显示该窗口内对 `<APP_HOST>` 的访问只有执行者从 `<OPS_NODE>` 发出的 2 次检查请求，**没有外部访问**。
+- 原因：认证服务配置中 `location / { auth_basic …; return 204; }`——nginx 的 `return` 在 rewrite 阶段执行，早于 `auth_basic`（access 阶段），所以所有请求都被放行。
+- 处理：改为 `try_files /__authenticated__ =204;`（precontent 阶段，在认证之后），并在模板中注释说明。先在 App 为 0 副本时单独验证认证服务（port-forward：无凭据 401 + `WWW-Authenticate: Basic`、错误凭据 401、正确凭据 204），再 `20-deploy.sh` 恢复 App（rev3）：无凭据 401、错误凭据 401、正确凭据 200；`/_stcore/health`、`/_stcore/stream`、静态资源、`/healthcare` 无凭据均 401。
+- 教训：涉及对外暴露的变更，应先在后端不可用时验证认证，再放出后端（已写入 KUBERNETES.md 的变更步骤）。
+
+**问题 3：`check_demo.py` 在 Pod 内报 `UnboundLocalError`**
+- 原因：C1b 在 `main()` 中加了局部 `import importlib`，使整个函数里的 `importlib` 变成局部变量。处理：删除局部导入，新增回归测试（模拟缺少 `secrets.toml` 时 `main()` 返回 1、不抛异常），重建镜像 `1.0.0-e93c4d6`（`sha256:4a7076fc8b12a513bf2ed89338ee0a5f9bec231d9b9674e458183061494f12b2`，冒烟 38 个测试 OK、卫生 PASS）。
+
+**当前对象**（命名空间 `sao-golden`）：Deployment `sao-golden-app`（1/1）、`sao-golden-auth`（1/1）；StatefulSet `sao-golden-postgres`（1/1，PVC 5Gi @ `<PG_NODE>`）；Service ×3；Ingress `sao-golden`（`nginx`，TLS，auth-url）；ConfigMap `ao-internal-ca`、`sao-golden-auth`；Secret ×4；Helm release `sao-golden` rev4。
