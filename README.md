@@ -26,6 +26,7 @@
 | K8s：构建镜像、部署、升级回退 | [2.2](#install-kubernetes) → [KUBERNETES.md 第 4、6 节](documentation/KUBERNETES.md#4-安装可完整手工复现) |
 | K8s：日常启停、演示前检查 | [KUBERNETES.md 第 5、9 节](documentation/KUBERNETES.md#5-日常启停) |
 | K8s / On-prem 演示（Luna 本地评估、Qwen） | [5.9 本地化 Luna 演示](#luna-onprem-demo) |
+| K8s / On-prem：为什么应用代码改了这么多、插桩是否变化 | [6.6 改动总览](#onprem-code-changes) |
 | K8s / On-prem 排障 | [KUBERNETES.md 第 10 节](documentation/KUBERNETES.md#10-排障)；[7. 排障](#troubleshooting) 末尾几行 |
 
 命令默认在**本仓库根目录**执行。文中的 `python` 指已激活的项目 `.venv`；如果没有激活，用 `.venv/bin/python`。应用页面在本机 `127.0.0.1:8501`，Console 是远程服务，两者都需要打开。
@@ -1379,8 +1380,10 @@ LangGraph LLM / Tool / Chain / Retriever events
                   ↓
             GalileoLogger
                   ↓
-          Splunk AO · splunkse
+   Splunk AO · splunkse（SaaS）或 imlab-onprem（On-prem）
 ```
+
+两个后端使用同一套插桩代码；On-prem 只改变数据上报的目标地址（见 [6.6 改动总览](#onprem-code-changes)）。
 
 #### 插桩与运行时控制的关系
 
@@ -1420,6 +1423,26 @@ python -m unittest tests.test_onprem_k8s -v       # profile、ingest 门、REST 
 <a id="onprem-architecture"></a>
 
 ### 6.6 Backend profile、Kubernetes 部署与 On-prem 访问原理（2026-11-21 新增）
+
+<a id="onprem-code-changes"></a>
+
+#### 迁移后代码改动总览
+
+**插桩没有变。** SaaS 与 On-prem 用的是同一条采集链：`GalileoCallback` + `GalileoLogger`（[6.4](#instrumentation)），SDK 版本不变（`galileo` 2.6.0、`agent-control-sdk` 8.11.0），Trace / Span 的结构和内容不变，也没有改成 OTLP / OpenInference（阶段 2 已在 On-prem 上实测，见[工程记录阶段 2 第 9 条](documentation/records/k8s-onprem-record-20261121.md#2026-11-21-阶段-2on-prem-兼容性验证执行者mac-上的-github-copilot2135-开始2240-完成)）。打包镜像本身也几乎不改应用逻辑。
+
+应用代码的改动按原因分为五类。前三类是“换后端 / 进集群 / 用 Luna”所必需的，后两类是这次顺带加入的内容：
+
+| # | 原因 | 是否必需 | 应用代码 | 规模（约） |
+|---|---|---|---|---|
+| 1 | **原代码只支持 SaaS 租户**：`setup_env.py` 直接拒绝 `splunkse` 以外的 profile；REST 查询与 Agent Control 走 Console 的 UI 代理（`<console>/api/galileo`、`<console>/api/agent-control`，并带浏览器式请求头）；租户路径 `/splunkse` 与 Control 头名 `Galileo-API-Key` 是写死的。On-prem 没有租户路径，REST 与 Agent Control 直连 API，头名为 `Splunk-AO-API-Key`。因此改为由 `BACKEND_PROFILES` 表驱动 | 换后端必需 | `setup_env.py`、`helpers/galileo_api_helpers.py`、`helpers/agent_control_helpers.py`、`app.py`（按钮名、Backend 标签） | +220 / −50 |
+| 2 | **App 部署在 AO 所在集群，只走内部 Service 地址**：SDK 默认 `/ingest` 与 API 在同一主机（经公网 ingress 时成立），而集群内的 `api` Service 不提供 `/ingest`。配置 `galileo_ingest_url` 后，SDK 的探测与原生写入改发到 `ingest-service`。这里改的是 SDK **把数据发往哪里**，没有改采集什么。从笔记本经公网连 On-prem 不需要这项设置；AO 内部 CA 由 Helm initContainer 处理，不改代码 | 集群内访问必需 | `helpers/galileo_ingest.py` | +120 |
+| 3 | **评估器换成本地 Luna（SLM）**：On-prem 的指标是另一组名称（`*_luna`），所以 Experiment 指标与 Cisco SE 导出器按 profile 选择。另外，原来 LLM 步骤的 Control 输入是“系统提示词 + 历史 + 工具结果”整段内容，Luna Prompt Injection 对它误报（普通问题得分 0.85–0.93），所以 **Control 输入**改为最新一条用户消息。这一项属于运行时控制（Agent Control），不属于观测插桩，并且两个后端同样生效 | 使用 Luna 必需 | `experiments/experiment_helpers.py`、`experiments/cisco_se_economics.py`、`experiments/run_experiment.py`、`domains/cisco_se/config.yaml`、`app.py`（指标列表）、`agent_frameworks/langgraph/agent.py`（`latest_user_text`） | +110 / −20 |
+| 4 | **新增可选应用模型 vLLM / Qwen**：集群内 Qwen 作为第二个 provider。由于 vLLM 未开启服务端工具调用解析，需要 Hermes 适配器。同时把三处重复的“按 provider 取默认模型”合并为 `get_provider_default_model()`（`agent.py` 因此净减约 30 行） | 非必需（新能力） | `helpers/hermes_chat.py`（新）、`helpers/llm_utils.py`、`domain_manager.py`、`app.py`、`agent_frameworks/langgraph/*.py` | +260 / −60 |
+| 5 | **容器化与运维工具**：可写输出改写到容器卷（`DEMO_DATA_DIR`）；集群内预检 `check_demo.py --in-cluster`；在新的 AO 实例上用代码建立三条 Demo Control；公开仓库卫生检查 | 仅 `DEMO_DATA_DIR` 为容器所必需；其余为工具 | `scripts/export_cisco_se_economics.py`、`scripts/run_cisco_se_ab.py`、`scripts/check_demo.py`、`scripts/setup_demo_controls.py`（新）、`scripts/check-public-hygiene.sh`（新） | +430 / −30 |
+
+此外还有不涉及应用逻辑的部分：`Dockerfile`、Helm chart 与 `deploy/k8s/` 脚本（约 1,300 行，全为新增），测试 `tests/test_onprem_k8s.py`（约 320 行），文档（约 820 行）。Agent 的业务流程、Tools、RAG 与 Domain 数据都没有因为 On-prem 而修改；唯一例外是第 3 类的 Control 输入。
+
+规模为 `git diff --numstat 90602f3 11a9526`（迁移前基线 → 迁移完成）按上表归类的约数；同一文件涉及多类时按改动块拆分。逐文件清单见[工程记录阶段 1](documentation/records/k8s-onprem-record-20261121.md#2026-11-21-阶段-1代码适配执行者mac-上的-github-copilot2055-开始2125-完成)，各项原理见下面各小节。
 
 #### Profile 机制
 
