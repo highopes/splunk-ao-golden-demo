@@ -27,6 +27,7 @@
 | K8s：日常启停、演示前检查 | [KUBERNETES.md 第 5、9 节](documentation/KUBERNETES.md#5-日常启停) |
 | K8s / On-prem 演示（Luna 本地评估、Qwen） | [5.9 本地化 Luna 演示](#luna-onprem-demo) |
 | K8s / On-prem：为什么应用代码改了这么多、插桩是否变化 | [6.6 改动总览](#onprem-code-changes) |
+| 插桩 SDK 新旧对比；SaaS 与 On-prem 各支持哪些接入、用什么接口 | [6.4 SDK 新旧对比与各后端接口](#sdk-and-ingest) |
 | K8s / On-prem 排障 | [KUBERNETES.md 第 10 节](documentation/KUBERNETES.md#10-排障)；[7. 排障](#troubleshooting) 末尾几行 |
 
 命令默认在**本仓库根目录**执行。文中的 `python` 指已激活的项目 `.venv`；如果没有激活，用 `.venv/bin/python`。应用页面在本机 `127.0.0.1:8501`，Console 是远程服务，两者都需要打开。
@@ -1391,7 +1392,54 @@ LangGraph LLM / Tool / Chain / Retriever events
 
 标准技术开场不超过一分钟：展示架构 → 以上几行 Callback → 一句话解释 Logger → 回 UI 真实提问 → 立刻打开相应 Trace。不要逐行讲 SDK。
 
-产品概念参考 [Splunk AO 官方概览](https://agent-observability-docs.splunk.com/what-is-splunk-agent-observability)、[Instrumentation](https://agent-observability-docs.splunk.com/sdk-api/logging/logging-basics) 和 [Agent Control](https://agent-observability-docs.splunk.com/concepts/agent-control/overview)。2026-10-06 验收时，官方新文档已使用 `splunk-ao` / `splunk_ao`；本仓库按指定上游保留 `galileo` SDK、`GalileoCallback`、`GalileoLogger` 与 Log Stream 配置。当时 splunkse Console 显示 **Agent Stream**，旧 `/log-streams/` 链接自动跳转到 `/agent-streams/`，Console 根地址也会自动加入租户路径。不要混用两套 SDK 包名与环境变量；页面名称以实际租户 UI 为准。
+产品概念参考 [Splunk AO 官方概览](https://agent-observability-docs.splunk.com/what-is-splunk-agent-observability)、[Instrumentation](https://agent-observability-docs.splunk.com/sdk-api/logging/logging-basics) 和 [Agent Control](https://agent-observability-docs.splunk.com/concepts/agent-control/overview)。2026-10-06 验收时，官方新文档已使用 `splunk-ao` / `splunk_ao`；本仓库按指定上游保留 `galileo` SDK、`GalileoCallback`、`GalileoLogger` 与 Log Stream 配置（原因与新旧对比见下节）。当时 splunkse Console 显示 **Agent Stream**，旧 `/log-streams/` 链接自动跳转到 `/agent-streams/`，Console 根地址也会自动加入租户路径。不要混用两套 SDK 包名与环境变量；页面名称以实际租户 UI 为准。
+
+<a id="sdk-and-ingest"></a>
+
+#### SDK 新旧对比，以及各后端支持的接入方式与接口（2026-11-22 核实）
+
+**本应用使用老一代 SDK，因为开发较早。** 本应用的基线是上游 [rungalileo/galileo-golden-demo](https://github.com/rungalileo/galileo-golden-demo)，基于 `galileo` SDK 编写。2026-10-06 导入本仓库时，`splunk-ao` SDK 才发布约两个月，最新版本为 0.4.0（0.1.0 发布于 2026-07-31）。为与上游保持一致，导入时保留了 `galileo`，并锁定当时验证过的 2.6.0（2026-07-30 发布）。因此本应用目前仍使用老一代插桩与 JSON 传输。2026-11-21 的 Kubernetes / On-prem 升级也没有更换 SDK（[6.6](#onprem-code-changes)）。迁移到 `splunk-ao` / OTLP 列在 [8.4 Roadmap](#roadmap) 第 3 项。
+
+**表 1　插桩 SDK：本应用使用的老一代与新一代对比**
+
+| 方面 | 本应用：`galileo` 2.6.0（老一代） | 新一代：`splunk-ao` 0.8.0（2026-11-16） | 异同 |
+|---|---|---|---|
+| 安装与核心类 | `pip install galileo`；`from galileo import GalileoLogger` | `pip install splunk-ao`；`from splunk_ao import SplunkAOLogger` | 改名 |
+| LangChain / LangGraph 插桩 | `galileo.handlers.langchain.GalileoCallback` | `splunk_ao.handlers.langchain.SplunkAOCallback`（另有 `SplunkAOAsyncCallback`、`SplunkAOMiddleware`） | 用法相同，改名 |
+| 其他插桩方式 | `@log` 装饰器、`galileo_context`、`galileo.openai` 包装器 | `@log`、`splunk_ao_context`、`splunk_ao.openai` | 用法相同，改名 |
+| 数据模型 | Session / Trace / Span（`galileo_core`） | 同左（仍依赖 `galileo_core`） | 相同 |
+| 配置 | `GALILEO_API_KEY`、`GALILEO_CONSOLE_URL`、`GALILEO_API_URL`、`GALILEO_PROJECT`、`GALILEO_LOG_STREAM` | On-prem / 自建：`SPLUNK_AO_API_KEY`、`SPLUNK_AO_CONSOLE_URL`（可选 `SPLUNK_AO_API_URL`）；Observability Cloud：`SPLUNK_AO_REALM`、`SPLUNK_AO_O11Y_TOKEN`；路由：`SPLUNK_AO_PROJECT`、`SPLUNK_AO_AGENT_STREAM` | 改名；新增 Observability Cloud 模式（老 SDK 没有 realm 配置） |
+| 术语 | Log Stream | Agent Stream（`SPLUNK_AO_LOG_STREAM` 仍兼容） | 改名 |
+| **传输（主要差异）** | **JSON**：先探测 `<api>/ingest/healthz`，成功则 `POST <api>/ingest/traces/<project_id>`（由 ingest-service 处理），否则退回 Legacy `POST <api>/v2/projects/<project_id>/traces`；Trace / Span 更新与 Session 调用走 `api` | **OTLP/HTTP（protobuf）**：自建 `POST <api>/otel/v1/traces`；Observability Cloud `https://ingest.<realm>.observability.splunkcloud.com/v2/trace/otlp`；用请求头 `project` / `logstream`（或 `experimentid`）路由。JSON 只保留在已弃用的 `ingestion_hook` 中 | 不同 |
+| 认证头 | `Galileo-API-Key` | 自建 `Splunk-AO-API-Key`；Observability Cloud `X-SF-Token` | 改名 |
+| 接入已有 OpenTelemetry | 可选 `galileo[otel]`：`GalileoOTLPExporter` / `GalileoSpanProcessor`，发往 `<api>/otel/traces`（由 `api` 处理，不经 ingest-service） | OTLP 本身就是默认传输；`otel.add_splunk_ao_span_processor()` 可接入已有 TracerProvider | 路径不同 |
+| Agent Control | 独立的 `agent-control-sdk`，通过 `[galileo]` 桥接关联到 Trace | 仍是独立的 `agent-control-sdk`，由 `SplunkAOAgentControlBridge` 关联到 Trace | 机制相同 |
+
+**表 2　各后端支持的接入方式与接口**
+
+“官方 SaaS”指官方文档中集成在 Splunk Observability Cloud 的 SaaS（2026-09-15 发布）。Golden Demo 原来使用的 `splunkse` 是另一种 SaaS：galileocloud 多租户平台上的一个租户，接口与 On-prem 属于同一套。前两列的 ✅ 均于 2026-11-22 实测（无凭据路由探测，以及只读或 0 span 的认证探测）；第三列来自官方文档，本项目未实测。
+
+| 接入方式 / 接口 | `splunkse`（多租户 SaaS，Golden Demo 原后端） | `imlab-onprem`（On-prem，本集群） | 官方 SaaS（Splunk Observability Cloud） |
+|---|---|---|---|
+| Console | `https://console.multitenant.galileocloud.io/splunkse`（带租户路径） | `https://console.<AO 域名>` | Observability Cloud 主菜单 → Agent Observability |
+| API 基址 | `https://api.multitenant.galileocloud.io`；本应用的 REST 查询沿用上游，经 Console 代理 `<console>/api/galileo` | `https://api.<AO 域名>`；集群内 `https://api.galileo.svc.cluster.local:8088` | 由 realm 推导：`…<realm>.observability.splunkcloud.com/ao/api/` |
+| 认证 | `Galileo-API-Key` 与 `Splunk-AO-API-Key` 均可 | 同左；另支持 Basic Auth、JWT | Observability Cloud token（`X-SF-Token`） |
+| 原生 JSON ingest（老 SDK 2.1.0+） | ✅ `/ingest/traces/<id>`、`/ingest/spans/<id>` → ingest-service（**本应用实际使用**） | ✅ 同左；集群内需直连 `ingest-service…:8081`（[6.6](#onprem-architecture)，**本应用实际使用**） | 文档未列（新 SDK 只用 OTLP） |
+| Legacy REST 写入 | ✅ `POST /v2/projects/<id>/traces` → `api` | ✅ 同左 | REST API 基址为 `…/ao/api/`；是否提供此写入接口未核实 |
+| **OTLP**（新 SDK、标准 OTel / OpenInference） | ✅ `POST /otel/v1/traces` → ingest-service；路由与两种认证头已实测，**用 `splunk-ao` 端到端写入尚未测试** | ✅ 同左（部署指南的标准路由：http/protobuf 或 http/json，可 gzip，不支持 gRPC）；**用 `splunk-ao` 端到端写入尚未测试** | ✅ `https://ingest.<realm>.observability.splunkcloud.com/v2/trace/otlp` |
+| 老 SDK 的 OTel 路径 | ✅ `/otel/traces` → `api` | ✅ 同左 | — |
+| Agent Control | 本应用经 Console 代理 `<console>/api/agent-control`；`<api>/agent-control` 也可用 | `<api>/agent-control`；集群内 `http://agent-control.galileo.svc.cluster.local:8000`；头名默认 `Splunk-AO-API-Key` | `https://<realm 主机>/ao/agent-control`，头名 `X-SF-Token` |
+| `splunk-ao` 的配置模式 | standalone（`SPLUNK_AO_CONSOLE_URL`） | standalone | O11y（`SPLUNK_AO_REALM`） |
+| 能否使用本应用的老 SDK | ✅（当前方式） | ✅（当前方式） | ❌ 老 SDK 不支持 realm / `X-SF-Token`，需改用 `splunk-ao` 或标准 OTel |
+| 功能范围 | 与 On-prem 同一套平台；可用的评估器由租户配置决定 | 全部功能：全部 Luna 预置评估器、Luna 微调、自定义代码评估器 | 官方说明：与 On-prem 功能相同，但 Luna 预置评估器只支持 8 个，且不支持 Luna 微调和自定义代码评估器 |
+
+要点：
+
+- **On-prem 与 `splunkse` 的接入接口一致**：路由相同（`/ingest/*` 和 `/otel/v1/traces` 到 ingest-service，其余路径到 `api`，另有 `/agent-control`），两种认证头都接受，无凭据请求的响应也相同。差别只在地址（租户路径、集群内 Service 地址）和评估器资源。
+- **与官方 SaaS 不同**：官方 SaaS 的地址由 realm 推导，使用 Observability Cloud 的 token，新 SDK 在官方 SaaS 上只用 OTLP 写入。老 SDK 没有 realm 与 token 配置，接不上官方 SaaS。功能方面，官方说明除上表三项外与 On-prem 相同。
+- **新 SDK 的 OTLP 与“标准 OpenTelemetry 接入”在服务端是同一个入口**（`/otel/v1/traces`）。区别只在客户端由谁生成 span：新 SDK 自己生成带 AO 属性的 span，OpenInference 等 instrumentor 则生成 `gen_ai.*` 属性的 span。
+- **OTLP 按请求头名称路由时，不存在的 Project / Stream 会被自动创建**（即使请求中没有 span）。验证接口时请用已有的 Project，或事后清理。
+- 集群内改用新 SDK 时要注意：standalone 模式只有一个 `SPLUNK_AO_API_URL`，管理类调用与 OTLP 共用它。如果设为集群内 `api` Service，OTLP 会由 `api` 处理，能写入但不经过 ingest-service。这与当前 `helpers/galileo_ingest.py` 解决的是同一类分流问题（[6.6](#onprem-architecture)）。
 
 <a id="architecture-notes"></a>
 
@@ -1428,7 +1476,7 @@ python -m unittest tests.test_onprem_k8s -v       # profile、ingest 门、REST 
 
 #### 迁移后代码改动总览
 
-**插桩没有变。** SaaS 与 On-prem 用的是同一条采集链：`GalileoCallback` + `GalileoLogger`（[6.4](#instrumentation)），SDK 版本不变（`galileo` 2.6.0、`agent-control-sdk` 8.11.0），Trace / Span 的结构和内容不变，也没有改成 OTLP / OpenInference（阶段 2 已在 On-prem 上实测，见[工程记录阶段 2 第 9 条](documentation/records/k8s-onprem-record-20261121.md#2026-11-21-阶段-2on-prem-兼容性验证执行者mac-上的-github-copilot2135-开始2240-完成)）。打包镜像本身也几乎不改应用逻辑。
+**插桩没有变。** SaaS 与 On-prem 用的是同一条采集链：`GalileoCallback` + `GalileoLogger`（[6.4](#instrumentation)），SDK 版本不变（`galileo` 2.6.0、`agent-control-sdk` 8.11.0），Trace / Span 的结构和内容不变，也没有改成 OTLP / OpenInference（阶段 2 已在 On-prem 上实测，见[工程记录阶段 2 第 9 条](documentation/records/k8s-onprem-record-20261121.md#2026-11-21-阶段-2on-prem-兼容性验证执行者mac-上的-github-copilot2135-开始2240-完成)）。打包镜像本身也几乎不改应用逻辑。注意：“没有变”只针对这次升级；本应用使用的仍是老一代 `galileo` SDK 与 JSON 传输，而不是新一代 `splunk-ao` / OTLP，原因与对比见 [6.4 SDK 新旧对比与各后端接口](#sdk-and-ingest)。
 
 应用代码的改动按原因分为五类。前三类是“换后端 / 进集群 / 用 Luna”所必需的，后两类是这次顺带加入的内容：
 
@@ -1476,7 +1524,7 @@ flowchart LR
 
 #### Trace 写入：原生 JSON ingest 门（不改 OTLP）
 
-SDK 2.6.0 的 `GalileoLogger` 先探测 `<api>/ingest/healthz`，可用时把新 Trace 以 JSON 写到 `/ingest/traces/<project>`，否则退回 API 上的 Legacy 门。集群内的 `api` Service 不提供 `/ingest`，所以 `helpers/galileo_ingest.py` 在配置了 `galileo_ingest_url` 时让探测与写入改走 ingest-service；Trace/Span 更新、session 等调用仍走 API。这与 AO 官方 Observe 请求流一致，Trace 结构、Callback 插桩都不变，因此不需要改成 OTLP / OpenInference（列入 Roadmap）。注意：SDK 吞掉写入错误，需用 `check_demo.py --live` 与 ingest-service 日志确认真正写入。
+SDK 2.6.0 的 `GalileoLogger` 先探测 `<api>/ingest/healthz`，可用时把新 Trace 以 JSON 写到 `/ingest/traces/<project>`，否则退回 API 上的 Legacy 门。集群内的 `api` Service 不提供 `/ingest`，所以 `helpers/galileo_ingest.py` 在配置了 `galileo_ingest_url` 时让探测与写入改走 ingest-service；Trace/Span 更新、session 等调用仍走 API。这与 AO 官方 Observe 请求流一致，Trace 结构、Callback 插桩都不变，因此不需要改成 OTLP / OpenInference（列入 Roadmap；新 SDK 的 OTLP 传输与各后端接口见 [6.4](#sdk-and-ingest)）。注意：SDK 吞掉写入错误，需用 `check_demo.py --live` 与 ingest-service 日志确认真正写入。
 
 #### Control 输入只取最新用户消息
 
@@ -1567,7 +1615,7 @@ Kubernetes / On-prem 部署已于 2026-11-21 实现（[2.2](#install-kubernetes)
 
 1. **bank-agent-java 部署到 K8s**：`bank.<AO 域名>`，按 [KUBERNETES.md 第 11 节](documentation/KUBERNETES.md#11-接入新的独立应用如-bank)的“独立应用”模式接入（自己的仓库、工作目录、命名空间、Ingress、证书与凭据；可在它自己的配置文件里沿用同一组 Basic Auth 账号）。
 2. **多演示者并发**：去除进程级全局状态（Agent Control 与当前 Project/Stream），或按演示者部署多个实例。
-3. **插桩演进**：OTLP / OpenInference；迁移到 `splunk_ao` SDK；Agent Control `otel` sink。
+3. **插桩演进**：OTLP / OpenInference；迁移到 `splunk_ao` SDK；Agent Control `otel` sink（新旧 SDK 与各后端接口对比见 [6.4](#sdk-and-ingest)）。
 4. **全本地**：服务端开启 Qwen 工具调用解析后移除应用侧 Hermes 适配器；集群内 embedding 服务。
 5. **自训练评估器**：AO 的 Luna Studio 微调可用后，演示自训练 adapter 作为评估器。
 6. **CI**：GitHub Actions 自动构建镜像、漏洞扫描、公开仓库卫生检查。
