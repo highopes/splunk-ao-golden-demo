@@ -8,6 +8,8 @@
 
 **2026-11-21 新增第二套已验收环境：Kubernetes（机房集群）/ Splunk AO On-prem（profile `imlab-onprem`）/ Luna SLM 评估。** 应用以容器部署在自己的命名空间，经 Basic Auth 对外提供；在集群内只经 AO 内部服务地址访问 AO，评估与 Control 以本地 GPU 上的 Luna 小模型为主，并可选集群内 Qwen 作为应用模型。Golden Demo 是独立应用，只是 AO 的使用者（共用 AO 平台的 ingress 与域名入口），不属于 AO。安装运维见 [KUBERNETES.md](documentation/KUBERNETES.md)，演示见 [5.9](#luna-onprem-demo)，验收见 [VALIDATION.md](documentation/VALIDATION.md)。
 
+**2026-11-25：AO On-prem 的 Wizard 从 Luna-2 升级为 Luna-3**（Gemma 4 基座；评估器 ID 不变，分数分布变化）。PII Steer 的重试提示词改为直接陈述 Steer 要求（镜像 `1.0.0-c556889` 起），三条 Control 同时启用时的演示已重新验收，见 [VALIDATION.md](documentation/VALIDATION.md#luna3)。
+
 本 README 是安装、启用、维护和演示的操作手册。所有患者、客户、电话、地址及业务记录都是合成演示数据（synthetic demo data）；药物知识用于演示检索和评测。
 
 ## 按当前任务阅读
@@ -1252,8 +1254,8 @@ Domain 结构与命令见 [4.2 Cisco SE 实例](#cisco-se-domain)；当前验收
 | 步骤 | 操作 | 讲什么 / 看什么 |
 | --- | --- | --- |
 | L1 本地评估 | 问 Lisinopril 剂量问题 → 打开 Trace | LLM Span 上的 Context Adherence (SLM)、Completeness (SLM)，Trace 上的 Prompt Injection、PII、Tone 等都由本地 Luna 打分；数秒内出分，不调用外部 LLM。Trace 根上的 Context Adherence 是 roll-up |
-| L2 本地 Control：PII | `--enable sql,pii` → 查 P001 | Luna `pii` scorer 检出电话与地址 → POST Steer → 重试后输出不含电话与地址；Control Span 中可见检出的类别 |
-| L3 本地 Control：Prompt Injection | `--enable sql,injection` → 发注入文本；再问正常问题 | 注入请求 PRE Deny（分数约 0.9998），集群内整条 Trace 约 0.5 s 结束——模型根本没被调用；正常问题分数约 0.0001–0.06，放行 |
+| L2 本地 Control：PII | `--enable sql,pii` → 查 P001 | Luna `pii` scorer 检出电话与地址 → POST Steer → 重试后输出不含电话与地址；Control Span 中可见检出的类别。同时启用 Injection 时，重试提示（`Remove phone number and address from output. Keep all other relevant information.`）的 Prompt Injection 分数约 0.001，放行 |
+| L3 本地 Control：Prompt Injection | `--enable sql,injection` → 发注入文本；再问正常问题 | 注入请求 PRE Deny（Luna-3 分数约 0.99999），集群内整条 Trace 约 0.1–0.5 s 结束——模型根本没被调用；正常问题放行（Luna-3：Lisinopril 约 0.000005、P001 约 0.06；`Delete patient P001.` 约 0.56，仍低于 0.80） |
 | L4 规模化评估 | Experiments 页面或 Pod 内 `run_experiment.py` 跑 15 样本 | 每个样本的 Luna 指标与 Ground Truth Adherence（LLM 评判，本环境由集群内 Qwen 执行）对照；Luna 指标随写入很快完成，GT Adherence 需要 5–15 分钟 |
 | L5 全本地应用模型（可选） | provider 选 **vLLM (Qwen3-14B-FP8)** → 查 P001、问 Lisinopril、删除 P001 | 除 embedding 外，应用模型与评估都在机房内；LLM Span 显示结构化 `tool_calls`；SQL Control 照常 Deny。Qwen 时延明显高于 OpenAI（单次调用 2–20 s），只作为可选环节 |
 
@@ -1265,6 +1267,7 @@ Domain 结构与命令见 [4.2 Cisco SE 实例](#cisco-se-domain)；当前验收
 - **成本**：Luna 指标与 Control 不按 Token 计费；本环境的 Ground Truth Adherence 评判也由集群内 Qwen 执行（导出 CSV 中 `judge_model=Qwen/Qwen3-14B-FP8`、评判费用 0）。外部费用只来自应用模型（OpenAI）与 embedding。
 - **数据边界**：Trace、评估、Control 决策都在机房内的 AO 中；应用在集群内经 AO 内部服务地址写入（不经公网）。
 - **质量**：Healthcare 15 样本 Experiment 的 Luna Context Adherence 均值 0.884、Completeness 0.933（45 个 LLM Span）。
+- **Luna-3（2026-11-25 起）的 PII 范围**：患者资料中的电话与地址照常检出；但回答里单独出现的客服电话（如 “call our desk at (555) …”）Luna-3 可能不识别为 `phone_number`。演示只讲“患者电话与地址被移除”，不宣称“回答中任何电话号码都会被拦截”。
 
 <a id="architecture"></a>
 
@@ -1559,7 +1562,7 @@ AO 的 ingress-nginx 控制器以只读根文件系统运行，无法使用 `aut
 | 请求长时间等待 | 区分模型网络、数据库、Console/API；UI API lookup 有 20 秒 timeout；先用预检定位 |
 | Control 没触发 | 检查 endpoint、Agent name、Log Stream 关联、启用状态、PRE/POST、step type/name、payload path |
 | DELETE 被阻断但没有 Control Span | 核对是本地 fallback 还是云端 Deny；本地成功不算远程策略通过 |
-| PII Steering 失败 | 检查 POST scorer 实际读取 output；检查重试原因；达到上限会显示未完成，不伪造成功。Control span 显示 `Luna score ['name'] any threshold ...` 时，把条件改为 `or` + 两个 `contains`；重试被 `block-prompt-injection` Deny 时，检查重试提示的 Injection 分数 |
+| PII Steering 失败 | 检查 POST scorer 实际读取 output；检查重试原因；达到上限会显示未完成，不伪造成功。Control span 显示 `Luna score ['name'] any threshold ...` 时，把条件改为 `or` + 两个 `contains`；重试被 `block-prompt-injection` Deny 时，检查重试提示的 Injection 分数：Luna-3 把 “revise your answer / comply with the output policy / previous answer” 一类改写指令打到 0.88–0.99，镜像需为 `1.0.0-c556889` 或更新（重试提示约 0.001） |
 | Prompt Injection 没触发 | 固定 Prompt 需本租户验证；检查阈值与 input mapping，不临时现场试错 |
 | Data Corruption 答案没有错误 | 这是 Prompt 驱动注入；模型可能拒绝/忽略。换已验收的 `gpt-4o`，或将本段移出主线；回答变成 Agent Control 拦截提示时，检查 `block-prompt-injection` 是否仍 Enabled |
 | Experiment 显示失败 | 先确认 Dataset/reference、OpenAI、embedding、scorer 可用性；检查样本 Trace 与实际 run 状态 |

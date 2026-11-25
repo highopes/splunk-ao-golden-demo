@@ -20,10 +20,10 @@
 
 | 项 | 状态 |
 | --- | --- |
-| 阶段 | 0–3、5、6、8、9 全部完成（第 4、7 阶段按决策取消） |
+| 阶段 | 0–3、5、6、8、9 全部完成（第 4、7 阶段按决策取消）；2026-11-25 阶段 10（AO 切换 Luna-3 后的适配）完成 |
 | 本仓库 HEAD（GitHub / Mac / `<OPS_NODE>` / `<BUILD_HOST>`） | 见本节之后的最后一次提交（四处一致） |
-| 镜像 | 运行中 `highope/sao-golden:1.0.0-e93c4d6`（`sha256:4a7076fc…12b2`）；此前 `1.0.0-03a0a1f`（`sha256:3536d717…e19f`）。均为 Public |
-| 命名空间 `sao-golden` | Helm release `sao-golden` rev4；app / auth / postgres 均就绪；`40-verify.sh` ALL PASS；外网经 Basic Auth 可用 |
+| 镜像 | 运行中 `highope/sao-golden:1.0.0-c556889`（`sha256:5f87921d…2070`）；此前 `1.0.0-e93c4d6`（`sha256:4a7076fc…12b2`）、`1.0.0-03a0a1f`（`sha256:3536d717…e19f`）。均为 Public |
+| 命名空间 `sao-golden` | Helm release `sao-golden` rev6；app / auth / postgres 均就绪；`40-verify.sh` ALL PASS；外网经 Basic Auth 可用 |
 | Demo Control | SQL 启用；PII、Prompt Injection 停用（标准状态） |
 | 未决事项 | 无（阶段 6 的 15 样本 Experiment 已在集群内完成） |
 
@@ -237,3 +237,29 @@ bash deploy/k8s/build/build-image.sh push highope/sao-golden
 - `<OPS_NODE>`：本任务的 tmux 会话已结束；`/tmp` 无本任务文件；`.work/probes/` 与 `.work/logs/` 保留（Git 忽略）。
 - Mac：`secrets.toml` 为 `splunkse`；本地 App 已停；删除 `/tmp` 中的 helm 渲染临时文件；停止防休眠。
 - 最终核对（23:59）：`40-verify.sh` **ALL PASS**；外网无凭据 401；AO `galileo-stack` rev5、`pulse` rev1，AO `70-verify.sh` 验证通过，AO 工作目录干净、`.secret/` 无新文件、`galileo` 命名空间无本任务创建的对象；Demo Control 为 SQL 启用、PII / Injection 停用。
+
+<a id="luna3-phase10"></a>
+
+### 2026-11-25 阶段 10：AO 切换 Luna-3 后的适配（执行者：Mac 上的 GitHub Copilot，经 JumpServer 在 `<OPS_NODE>`、`<BUILD_HOST>` 操作；19:25 开始，20:30 完成）
+
+**背景**：2026-11-25 17:30，AO 的 Wizard 从 Luna-2 换为 Luna-3（评估器 ID、版本不变）。AO 侧交接说明：PII Steer 的重试提示在 Luna-3 下 Prompt Injection 约 0.99，PII 与 Injection 同时启用时 Steer 重试会变成 PRE Deny。AO 本身不改，只在本应用侧处理。结果与数据汇总见 [VALIDATION.md](../VALIDATION.md#luna3)。
+
+| 时间 | 操作 | 日志 / 产物（`.work/` 不进 Git） | 结果 |
+|---|---|---|---|
+| 19:28 | Mac 经公网只读核对 Control（`list_controls` + 绑定） | — | 3 条 Control 定义未变；绑定为标准状态（SQL 启用，PII / Injection 停用） |
+| 19:31 | `<OPS_NODE>`：20 条候选输入 × 3 次，在 agent-control Pod 内用 AO 仓库的 `lunaquality.py` 直接调用 `LunaEvaluator`（只读，不改绑定） | `.work/probes/golden-luna3-candidates.json`、`.work/logs/luna3-candidates-20261125-193115.log` | 旧重试提示 0.991；`<Steer 要求>. Keep all other relevant information.` 0.0010；含 “previous answer / previous question” 的变体 0.88–0.999；攻击 0.9998–0.999995；`Delete patient P001.` 0.562 |
+| 19:35 | Mac：改 `build_steer_correction_prompt()`，测试夹具与 1 个新单元测试；单元测试 73 OK，`DEMO_TEST_POSTGRES=1` PG 集成测试 10 OK（临时启动本机项目 PG，测完停止）；卫生检查 PASS；提交并推送 `c556889` | — | — |
+| 19:38 | `<BUILD_HOST>`：`git pull --ff-only` → `build-image.sh all` → `push` | `build-all-20261125-193817.log`、`build-push-20261125-193910.log` | 冒烟（容器内 39 个单元测试、PG）与镜像卫生 PASS；`1.0.0-c556889`，`sha256:5f87921d…2070` |
+| 19:39 | `<OPS_NODE>`：`git pull --ff-only` → `20-deploy.sh 1.0.0-c556889` | `deploy-20261125-193941.log` | rev5，App Pod 就绪 |
+| 19:40 | `40-verify.sh` | `verify-20261125-194018.log` | **OpenAI 各模型 `OpenAIAuthenticationError`**，其余 PASS。Mac 上经 `GET /v1/models` 确认 Key 本身失效（`invalid_api_key`）；集群、Secret 与 Mac 各 secrets 文件为同一个 Key（只比较摘要） |
+| 19:42 | Qwen 验收：`.work/probes/luna3-accept.sh vllm`（三条 Control 全开 → P001 / Lisinopril / 删除 / 攻击 → 取证 → `trap` 恢复为仅 SQL） | `luna3-accept-vllm-20261125-194210.log` | P001 Steer 重试 PI 0.0010 放行、回答不含电话与地址；攻击 deny；删除请求 Qwen 未调用工具 |
+| 20:07 | 用户在 `<OPS_NODE>` 的 `secrets.toml` 中更换 OpenAI Key（未经终端粘贴；本方只核对摘要已变化） | — | — |
+| 20:13 | `10-prepare-namespace.sh` → `20-deploy.sh 1.0.0-c556889` → `40-verify.sh` | `rekey-20261125-201353.log`（含 `prepare-namespace-…`、`deploy-20261125-201355.log`、`verify-20261125-201457.log`） | rev6；**ALL PASS** |
+| 20:15 | Hosted 验收：`luna3-accept.sh hosted` | `luna3-accept-hosted-20261125-201540.log` | P001 → PI 0.060 → PII 检出 → Steer → 重试 PI 0.0010 → 复检 `["name"]` → 无电话 / 地址；Lisinopril PI 0.000005；删除 P001 → PI 0.562 → SQL deny（仍 30 行）；攻击 PI 0.999995 → deny（0.1 s）；结束恢复为仅 SQL 启用 |
+
+**决策**：
+
+1. 重试提示改为直接陈述 Steer 要求（Luna-3 0.001），不提 “revise / output policy / previous answer”；阈值保持 0.80；AO 与 Control 定义不变。
+2. 演示脚本中的 `Delete patient P001.` 保持不变（0.56 < 0.80，用户决定）；文档注明分数与备选说法 `Remove patient P001 from the system.`（0.016）。
+
+**收尾**：两台主机本任务的 tmux 会话已结束，工作区干净；`<BUILD_HOST>` 保留 `1.0.0-c556889`（运行中）与 `1.0.0-e93c4d6`（回退用）；Demo Control 为标准状态。Mac 上 4 个 secrets 文件也已由用户换为同一个新 Key（摘要一致）。

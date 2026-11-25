@@ -258,6 +258,8 @@ PostgreSQL 中只有可重建的合成数据（演示状态在 AO 中），不�
 | Trace 没写入 | Pod 内 `check_demo.py --in-cluster --live` 的 “SDK uses the native ingest door”；`kubectl -n galileo logs deploy/ingest-service`（只读）中应有来自 App Pod 的 `POST /ingest/traces/<project>` |
 | “Agent Control not verified” | Key 必须是组织级；`agent_control_url` 与头名；Pod 内预检 “Agent Control agent registered” |
 | 普通问题被 Prompt Injection 拦截 | 确认镜像包含“LLM 步骤 Control 输入只取最新用户消息”的版本（见 README 6.x）；阈值 0.80 |
+| PII 与 Injection 同时启用时，P001 回答被 Prompt Injection 拒绝 | PII Steer 的重试提示被 PRE Control 判为注入。AO 的 Wizard 为 Luna-3 时，镜像需为 `1.0.0-c556889` 或更新（重试提示直接陈述 Steer 要求，分数约 0.001）；不要靠提高阈值解决（见 [VALIDATION.md](VALIDATION.md#luna3)） |
+| 预检 `LLM endpoint … OpenAIAuthenticationError` | OpenAI Key 失效或被轮换：在运维节点更新 `secrets.toml` 的 `openai_api_key`，按第 7 节重跑 `10-prepare-namespace.sh` 与 `20-deploy.sh <当前标签>` |
 | PVC Pending / PG 不调度 | `postgres_node` 写错或该节点不可调度；本地盘 StorageClass 的 PVC 固定在首次调度的节点 |
 | 集群内问题与 AO 问题如何区分 | AO 的 `70-verify.sh` 全 PASS 且其他客户端正常 → 问题在本应用；本应用只读 AO 的 Service 与 CA ConfigMap，不改 AO |
 
