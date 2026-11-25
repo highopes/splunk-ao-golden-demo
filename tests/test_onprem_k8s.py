@@ -262,6 +262,16 @@ class LlmControlInputTests(unittest.TestCase):
         payload = _create_evaluation_payload(_invoke_llm, (latest_user_text(msgs), msgs), {}, step_name='Healthcare Assistant')
         self.assertEqual((payload['type'], payload['input']), ('llm', 'Show me data for patient P001.'))
 
+    def test_steer_retry_prompt_states_guidance_on_one_line(self):
+        # Luna-3 scores rewrite-style retries ("revise your answer", "previous answer") >= 0.88.
+        from helpers.agent_control_helpers import build_steer_correction_prompt
+        self.assertEqual(build_steer_correction_prompt(steering_instructions='Remove phone number and address from output'),
+                         'Remove phone number and address from output. Keep all other relevant information.')
+        prompt = build_steer_correction_prompt(steering_instructions='Remove phone number.\n\n  Do not include the date of birth.\n')
+        self.assertEqual(prompt, 'Remove phone number; Do not include the date of birth. Keep all other relevant information.')
+        for wording in ('revise', 'previous', 'output policy'):
+            self.assertNotIn(wording, prompt.lower())
+
 
 class CheckDemoTests(unittest.TestCase):
     def test_preflight_runs_to_missing_secrets_without_crashing(self):

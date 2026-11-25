@@ -37,20 +37,23 @@ def extract_steering_instructions(error: Exception) -> str:
 
 
 def build_steer_correction_prompt(*, steering_instructions: str) -> str:
-    """Prompt asking the LLM to revise its answer according to steering guidance.
+    """Prompt asking the LLM to apply steering guidance to its last answer.
 
     The retry is itself an LLM input, so it is also checked by PRE controls such
-    as Prompt Injection (SLM). Keep it a plain single-line request: override-style
-    wording ("follow these exactly", "do not repeat ...") or extra line breaks
-    scored >= 0.80 on Luna and turned a POST Steer retry into a PRE Deny.
+    as Prompt Injection (SLM). Keep it a plain single-line request that states the
+    guidance directly. On Luna-3, rewrite-style wording ("revise your answer to
+    comply with the output policy", "answer the previous question again", "the
+    rest of the previous answer") scores 0.88-0.999 and turns a POST Steer retry
+    into a PRE Deny; the guidance itself plus "Keep all other relevant
+    information." scores about 0.001. Override-style wording and extra line
+    breaks also scored >= 0.80 on Luna-2.
     """
     policy = "; ".join(
-        line.strip() for line in str(steering_instructions).splitlines() if line.strip()
-    ).rstrip(" .")
-    return (
-        f"Please revise your answer to comply with the output policy: {policy}. "
-        "Keep all other relevant information."
+        line.strip().rstrip(" .;")
+        for line in str(steering_instructions).splitlines()
+        if line.strip().rstrip(" .;")
     )
+    return f"{policy}. Keep all other relevant information."
 
 
 def format_steer_tool_result(error: Exception) -> str:

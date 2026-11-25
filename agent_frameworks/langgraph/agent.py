@@ -102,7 +102,7 @@ def latest_user_text(messages: List[BaseMessage]) -> str:
     This is the LLM step's Agent Control input. PRE controls such as Prompt
     Injection (SLM) then score what the user (or a correction) said, not the
     system prompt, history or tool results; whole-payload scoring flagged
-    ordinary questions on Splunk AO On-prem (0.85-0.93 vs 0.0001-0.04).
+    ordinary questions on Splunk AO On-prem with Luna-2 (0.85-0.93 vs 0.0001-0.04).
     """
     for message in reversed(list(messages)):
         if isinstance(message, HumanMessage):
